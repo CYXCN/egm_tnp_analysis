@@ -75,13 +75,13 @@ def makePassFailHistograms( sample, flag, bindef, var ):
             eff   = passI / (passI+failI)
             e_eff = math.sqrt(passI*passI*efail*efail + failI*failI*epass*epass) / (itot*itot)
         print(cuts)
-        print(('    ==> pass: %.1f +/- %.1f ; fail : %.1f +/- %.1f : eff: %1.3f +/- %1.3f' % (passI,epass,failI,efail,eff,e_eff)))
+        print('    ==> pass: %.1f +/- %.1f ; fail : %.1f +/- %.1f : eff: %1.3f +/- %1.3f' % (passI,epass,failI,efail,eff,e_eff))
     outfile.Close()
 
 
 def histPlotter( filename, tnpBin, plotDir ):
-    print(('opening ', filename))
-    print(('  get canvas: ' , '%s_Canv' % tnpBin['name']))
+    print('opening ', filename)
+    print('  get canvas: ' , '%s_Canv' % tnpBin['name'])
     rootfile = rt.TFile(filename,"read")
 
     c = rootfile.Get( '%s_Canv' % tnpBin['name'] )
