@@ -62,12 +62,16 @@ def makePassFailHistograms( sample, flag, bindef, var ):
     tree = new TChain(sample.tree)
 
     for p in sample.path:
-        print ' adding rootfile: ', p
+        print(' adding rootfile: ', p)
         tree.Add(str.encode(p))
 
     if not sample.puTree is None:
-        print ' - Adding weight tree: %s from file %s ' % (sample.weight.split('.')[0], sample.puTree)
-        tree.AddFriend(sample.weight.split('.')[0],sample.puTree)
+        import os
+        if os.path.exists(sample.puTree):
+            print(' - Adding weight tree: %s from file %s ' % (sample.weight.split('.')[0], sample.puTree))
+            tree.AddFriend(str.encode(sample.weight.split('.')[0]), str.encode(sample.puTree))
+        else:
+            print(' - Weight tree file not found or not readable, skipping AddFriend:', sample.puTree)
 
     #################################
     # Prepare hists, cuts and outfile
@@ -80,8 +84,8 @@ def makePassFailHistograms( sample, flag, bindef, var ):
     flag_formula = new TTreeFormula('Flag_Selection', str.encode(flag), tree)
 
     for ib in range(len(bindef['bins'])):
-        hPass.push_back(new TH1D('%s_Pass' % bindef['bins'][ib]['name'],bindef['bins'][ib]['title'],var['nbins'],var['min'],var['max']))
-        hFail.push_back(new TH1D('%s_Fail' % bindef['bins'][ib]['name'],bindef['bins'][ib]['title'],var['nbins'],var['min'],var['max']))
+        hPass.push_back(new TH1D(b'%s_Pass' % bindef['bins'][ib]['name'],bindef['bins'][ib]['title'],var['nbins'],var['min'],var['max']))
+        hFail.push_back(new TH1D(b'%s_Fail' % bindef['bins'][ib]['name'],bindef['bins'][ib]['title'],var['nbins'],var['min'],var['max']))
         hPass[ib].Sumw2()
         hFail[ib].Sumw2()
 
@@ -100,7 +104,7 @@ def makePassFailHistograms( sample, flag, bindef, var ):
 
         cutBinList.append(cutBin)
 
-        bin_formulas.push_back(new TTreeFormula('%s_Selection' % bindef['bins'][ib]['name'], str.encode(cutBin), tree))
+        bin_formulas.push_back(new TTreeFormula(b'%s_Selection' % bindef['bins'][ib]['name'], str.encode(cutBin), tree))
 
         formulas_list.Add(<TObject*>bin_formulas[nbins])
 
@@ -142,7 +146,7 @@ def makePassFailHistograms( sample, flag, bindef, var ):
 
     for index in range(nevts):
         if index % frac_of_nevts == 0:
-            print outcount, "%", sample.name
+            print(f'{outcount}%, {sample.name}')
             outcount = outcount + 5
 
         tree.GetEntry(index)
@@ -177,8 +181,8 @@ def makePassFailHistograms( sample, flag, bindef, var ):
             itot  = (passI+failI)
             eff   = passI / (passI+failI)
             e_eff = math.sqrt(passI*passI*efail*efail + failI*failI*epass*epass) / (itot*itot)
-        #print cuts
-        #print '    ==> pass: %.1f +/- %.1f ; fail : %.1f +/- %.1f : eff: %1.3f +/- %1.3f' % (passI,epass,failI,efail,eff,e_eff)
+        #print(cuts)
+        #print('    ==> pass: %.1f +/- %.1f ; fail : %.1f +/- %.1f : eff: %1.3f +/- %1.3f' % (passI,epass,failI,efail,eff,e_eff))
 
     ##########
     # Clean up

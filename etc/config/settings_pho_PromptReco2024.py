@@ -13,6 +13,8 @@ flags = {
     'passingCutBasedTight122XV1'    : '(passingCutBasedTight122XV1  == 1)',
     'passingMVA122XV1wp80' : '(passingMVA122XV1wp80 == 1)',
     'passingMVA122XV1wp90' : '(passingMVA122XV1wp90 == 1)',
+    'passingMVARun3V1wp80' : '(passingMVARun3V1wp80 == 1)',
+    'passingMVARun3V1wp90' : '(passingMVARun3V1wp90 == 1)',
     }
 
 baseOutDir = '/eos/user/i/idutta/Run3_bbgg/TriggerSF_development/Hgg_2024_trigSF/'
