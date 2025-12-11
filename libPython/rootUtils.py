@@ -88,10 +88,10 @@ def histPlotter( filename, tnpBin, plotDir ):
     c.Print( '%s/%s.png' % (plotDir,tnpBin['name']))
 
 
-def computeEffi( n1,n2,e1,e2):
+def computeEffi( n1,n2,e1,e2, eps = 1e-6 ):
     effout = []
-    eff   = n1/(n1+n2)
-    e_eff = 1/(n1+n2)*math.sqrt(e1*e1*n2*n2+e2*e2*n1*n1)/(n1+n2)
+    eff   = n1/(n1+n2+eps)
+    e_eff = 1/(n1+n2+eps)*math.sqrt(e1*e1*n2*n2+e2*e2*n1*n1)/(n1+n2+eps)
     if e_eff < 0.001 : e_eff = 0.001
 
     effout.append(eff)

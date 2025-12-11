@@ -5,7 +5,8 @@ import os
 import sys
 import pickle
 import shutil
-from multiprocessing import Pool
+import multiprocessing as mp
+import datetime
 
 
 parser = argparse.ArgumentParser(description='tnp EGM fitter')
@@ -24,8 +25,16 @@ parser.add_argument('--iBin'       , dest = 'binNumber'   , type = int,  default
 parser.add_argument('--flag'       , default = None       , help ='WP to test')
 parser.add_argument('settings'     , default = None       , help = 'setting file [mandatory]')
 
+parser.add_argument('--doCor'      , dest = 'doCorrection', action='store_true'  , help = 'do scale and smearing correction')
+parser.add_argument('--year'       , default = '2024', help = 'year config used for correction' )
+
 
 args = parser.parse_args()
+
+import types
+tnp_config_module = types.ModuleType('__tnp_config__')
+tnp_config_module.used_flag = args.flag
+sys.modules['__tnp_config__'] = tnp_config_module
 
 print('===> settings %s <===' % args.settings)
 importSetting = 'import %s as tnpConf' % args.settings.replace('/','.').split('.py')[0]
@@ -58,7 +67,7 @@ print(outputDirectory)
 ##### Create (check) Bins
 ####################################################################
 if args.checkBins:
-    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
     tnpBiner.tuneCuts( tnpBins, tnpConf.additionalCuts )
     for ib in range(len(tnpBins['bins'])):
         print(tnpBins['bins'][ib]['name'])
@@ -69,7 +78,7 @@ if args.createBins:
     if os.path.exists( outputDirectory ):
             shutil.rmtree( outputDirectory )
     os.makedirs( outputDirectory )
-    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
     tnpBiner.tuneCuts( tnpBins, tnpConf.additionalCuts )
     pickle.dump( tnpBins, open( '%s/bining.pkl'%(outputDirectory),'wb') )
     print('created dir: %s ' % outputDirectory)
@@ -95,6 +104,11 @@ if args.createHists:
     print(" ======== Creating Histograms (Final Precise Configuration) ========")
     import libPython.histUtils as tnpHist
     import copy
+
+    do_correction = args.doCorrection
+    correction_year = args.year
+    if do_correction:
+        print(f'apply scale and smearing correction using {correction_year} config')
 
     def tnpBins_converter(obj):
         """
@@ -135,11 +149,12 @@ if args.createHists:
             if hasattr(sample, 'tree') and isinstance(getattr(sample, 'tree'), str):
                 setattr(sample, 'tree', getattr(sample, 'tree').encode('utf-8'))
             # 2. `tnpBins` must be converted
-            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var )
+            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_year)
     
-    pool = Pool()
-    # pool.map(parallel_hists, tnpConf.samplesDef.keys())
-    for k in tnpConf.samplesDef.keys(): parallel_hists(k)
+    with mp.Pool() as pool:
+        pool.map(parallel_hists, tnpConf.samplesDef.keys())
+    # # debug for MC
+    # parallel_hists('mcNom')
 
     sys.exit(0)
 
@@ -171,11 +186,24 @@ for s in tnpConf.samplesDef.keys():
 if args.mcSig :
     sampleToFit = tnpConf.samplesDef['mcNom']
 
+test_bin_number = len(tnpBins['bins'])
+test_list = range(test_bin_number)
+
 if  args.doFit:
     print(" ======== Fitting ========")
     sampleToFit.dump()
     def parallel_fit(ib):
-        if (args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0:
+        if (args.binNumber >= 0 and ib == args.binNumber):
+            print('using looser fit for bin ', ib)
+            if args.altSig and not args.addGaus:
+                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFitLooser )
+            elif args.altSig and args.addGaus:
+                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
+            elif args.altBkg:
+                tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFitLooser )
+            else:
+                tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFitLooser )
+        if args.binNumber < 0:
             if args.altSig and not args.addGaus:
                 tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit )
             elif args.altSig and args.addGaus:
@@ -184,11 +212,62 @@ if  args.doFit:
                 tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFit )
             else:
                 tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFit )
-    pool = Pool()
-    pool.map(parallel_fit, range(len(tnpBins['bins'])))
 
+    timeout_seconds = 2000 if args.binNumber < 0 else 10000
+    timeout_log = os.path.join(outputDirectory, 'timeout.txt')
+    
+    tasks_to_run = []
+    for ib in test_list:
+        if ((args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0):
+            tasks_to_run.append(ib)
+    import time
+    max_procs = mp.cpu_count()
+    running_procs = [] 
+    
+    task_idx = 0
+    total_tasks = len(tasks_to_run)
+
+    while task_idx < total_tasks or len(running_procs) > 0:
+        while len(running_procs) < max_procs and task_idx < total_tasks:
+            ib = tasks_to_run[task_idx]
+            p = mp.Process(target=parallel_fit, args=(ib,))
+            p.start()
+            running_procs.append((p, ib, time.time()))
+            task_idx += 1
+        
+        active_procs = []
+        for p, ib, start_t in running_procs:
+            if not p.is_alive():
+                p.join()
+            
+            elif (time.time() - start_t) > timeout_seconds:
+                try:
+                    print(f"[tnpEGM_fitter] Killing bin {ib} due to timeout ({timeout_seconds}s)")
+                    p.terminate()
+                    p.join(5)
+                except Exception as e:
+                    print(f"Error terminating process: {e}")
+                
+                # timeout record
+                ts = datetime.datetime.now().isoformat()
+                ft_param = 'altSig' if args.altSig else ('altBkg' if args.altBkg else 'nominal')
+                info = f"{ts}\tbin={ib}\tflag={args.flag}\tsample={sampleToFit.name}\ttimeout={timeout_seconds}s\tfitParam={ft_param}\n"
+                with open(timeout_log, 'a') as fout:
+                    fout.write(info)
+            
+            else:
+                active_procs.append((p, ib, start_t))
+        
+        running_procs = active_procs
+        if len(running_procs) > 0:
+            time.sleep(0.1)
+
+    # parallel_fit(121)
+    # exit()
+    if args.binNumber >= 0:
+        print('fitting for bin %d done' % args.binNumber)
+        sys.exit(0)
     args.doPlot = True
-     
 ####################################################################
 ##### dumping plots
 ####################################################################
@@ -201,16 +280,34 @@ if  args.doPlot:
     if args.altBkg : 
         fileName = sampleToFit.altBkgFit
         fitType  = 'altBkgFit'
+    
+    import glob
+    to_merge_file_list = glob.glob( fileName.replace('.root', '-*.root') )
+    # check file size, if file size < 5KB, consider it as failed fit and remove it from merging
+    valid_file_list = []
+    invalid_bin_list = []
+    for f in to_merge_file_list:
+        if os.path.getsize(f) > 5*1024:
+            valid_file_list.append(f)
+        else:
+            print(f"[tnpEGM_fitter] removing invalid fit file {f} (size < 5KB)")
+            # get bin number from file name
+            # e.g. data_EGamma0_2025_Run2025C_0_unseeded_passingHLTUnseeded.nominalFit-bin349_el_sc_eta_2p00To2p50_el_et_200p00To500p00_el_r9_1p05To2p00
+            bin_str = f.split('.root')[0].split('-bin')[-1].split('_')[0]
+            invalid_bin_list.append(int(bin_str))
         
-    os.system('hadd -f %s %s' % (fileName, fileName.replace('.root', '-*.root')))
+    os.system('hadd -f %s %s' % (fileName, ' '.join(valid_file_list)))
 
     plottingDir = '%s/plots/%s/%s' % (outputDirectory,sampleToFit.name,fitType)
     if not os.path.exists( plottingDir ):
         os.makedirs( plottingDir )
     shutil.copy('etc/inputs/index.php.listPlots','%s/index.php' % plottingDir)
 
-    for ib in range(len(tnpBins['bins'])):
+    for ib in range(test_bin_number):#range(len(tnpBins['bins'])):
         if (args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0:
+            if ib in invalid_bin_list:
+                print(f"[tnpEGM_fitter] skipping plotting for invalid bin {ib}")
+                continue
             tnpRoot.histPlotter( fileName, tnpBins['bins'][ib], plottingDir )
 
     print(' ===> Plots saved in <=======')
@@ -243,34 +340,56 @@ if args.sumUp:
     fOut = open( effFileName,'w')
     
     for ib in range(len(tnpBins['bins'])):
+        print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
         effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib] )
 
-        ### formatting assuming 2D bining -- to be fixed        
-        v1Range = tnpBins['bins'][ib]['title'].split(';')[1].split('<')
-        v2Range = tnpBins['bins'][ib]['title'].split(';')[2].split('<')
-        if ib == 0 :
-            astr = '### var1 : %s' % v1Range[1]
-            print(astr)
-            fOut.write( astr + '\n' )
-            astr = '### var2 : %s' % v2Range[1]
-            print(astr)
-            fOut.write( astr + '\n' )
-            
-        astr =  '%+8.5f\t%+8.5f\t%+8.5f\t%+8.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f' % (
-            float(v1Range[0]), float(v1Range[2]),
-            float(v2Range[0]), float(v2Range[2]),
-            effis['dataNominal'][0],effis['dataNominal'][1],
-            effis['mcNominal'  ][0],effis['mcNominal'  ][1],
-            effis['dataAltBkg' ][0],
-            effis['dataAltSig' ][0],
-            effis['mcAlt' ][0],
+        ### formatting for arbitrary N-D binning
+        title_parts = tnpBins['bins'][ib]['title'].split(';')
+        n_vars = len(title_parts) - 1
+        
+        var_ranges = []
+        for i in range(1, n_vars + 1):
+            var_range = title_parts[i].split('<')
+            if '>' in title_parts[i]:
+                var_range = title_parts[i].replace('=','').split('>')
+                var_range = [var_range[1], 'xxx', 9999]
+            var_ranges.append(var_range)
+        
+        if ib == 0:
+            print(tnpBins['bins'][ib]['title'])
+            for i, var_range in enumerate(var_ranges, 1):
+                astr = '### var%d : %s' % (i, var_range[1])
+                print(astr)
+                fOut.write(astr + '\n')
+
+        format_parts = []
+        values = []
+        
+        for var_range in var_ranges:
+            format_parts.extend(['%+8.5f', '%+8.5f'])
+            values.extend([float(var_range[0]), float(var_range[2])])
+        
+        # add efficiency values
+        # value handel: if XXX[0] == 0.5 then set to 0 as 0.5 is default for almost zero stat
+        for key in ['dataNominal', 'mcNominal', 'dataAltBkg', 'dataAltSig', 'mcAlt', 'tagSel']:
+            if key in effis:
+                if abs(effis[key][0] - 0.50000) < 1e-5:
+                    effis[key][0] = 0.0
+        format_parts.extend(['%5.5f'] * 8)
+        values.extend([
+            effis['dataNominal'][0], effis['dataNominal'][1],
+            effis['mcNominal'][0], effis['mcNominal'][1],
+            effis['dataAltBkg'][0],
+            effis['dataAltSig'][0],
+            effis['mcAlt'][0],
             effis['tagSel'][0],
-            )
+        ])
+        astr = '\t'.join(format_parts) % tuple(values)
         print(astr)
-        fOut.write( astr + '\n' )
+        fOut.write(astr + '\n')
     fOut.close()
 
     print('Effis saved in file : ',  effFileName)
-    import libPython.EGammaID_scaleFactors as egm_sf
+    import libPython.new_EGammaID_scaleFactors as egm_sf
     egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
     exit(0)

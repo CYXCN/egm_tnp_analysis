@@ -162,3 +162,43 @@ Prompt2022 = {
     'data_Run2022G' : tnpSample('data_Run2022G' , eosPrompt2022FG + 'Run2022G.root' , lumi = 3.121865602),
 }
 
+#/eos/cms//store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/unseeded/2025/mc//TnPTree_DYto2E-2Jets_Bin-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_2025_Run2025MC.root
+
+Prompt2025 = {
+    'DY_madgraph'              : tnpSample('DY_madgraph',
+                                                    '/eos/cms//store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/2025/mc//TnPTree_DYto2E-2Jets_Bin-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_2025_Run2025MC.root',
+                                       isMC = True, nEvts =  -1 ),  
+    # 'DY_madgraph_unseeded'              : tnpSample('DY_madgraph_unseeded',
+    #                                                 '/eos/cms//store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/unseeded/2025/mc//TnPTree_DYto2E-2Jets_Bin-MLL-50_TuneCP5_13p6TeV_amcatnloFXFX-pythia8_2025_Run2025MC.root',
+    #                                 #    '/eos/cms/store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/unseeded/2025/mc/TnPTree_DYto2L-4Jets_Par-2J-MLL-50_TuneCP5_13p6TeV_madgraphMLM-pythia8_2025_Run2025D_0.root',
+    #                                    isMC = True, nEvts =  -1 ),
+    
+    # 'DY_madgraph_seeded'              : tnpSample('DY_madgraph_seeded',
+    #                                    '/eos/cms/store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/seeded/2025/mc/TnPTree_DYto2L-4Jets_Par-2J-MLL-50_TuneCP5_13p6TeV_madgraphMLM-pythia8_2025_Run2025D_0.root',
+    #                                    isMC = True, nEvts =  -1 ),
+}
+dir_prefix_2025 = '/eos/cms/store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/SF/2024-01-08/'
+dict_2025 = {
+    # C: 20.78, D: 25.29, E: 14, F: 16.11 
+"TnPTree_EGamma0_2025_Run2025C_0.root": 20.78/4,
+"TnPTree_EGamma0_2025_Run2025D_0.root": 25.29/4,
+"TnPTree_EGamma0_2025_Run2025E_0.root": 14.0/4,
+"TnPTree_EGamma0_2025_Run2025F_0.root": 16.11/4,
+"TnPTree_EGamma1_2025_Run2025C_1.root": 20.78/4,
+"TnPTree_EGamma1_2025_Run2025D_1.root": 25.29/4,
+"TnPTree_EGamma1_2025_Run2025E_1.root": 14.0/4,
+"TnPTree_EGamma1_2025_Run2025F_1.root": 16.11/4,
+"TnPTree_EGamma2_2025_Run2025C_2.root": 20.78/4,
+"TnPTree_EGamma2_2025_Run2025D_2.root": 25.29/4,
+"TnPTree_EGamma2_2025_Run2025E_2.root": 14.0/4,
+"TnPTree_EGamma2_2025_Run2025F_2.root": 16.11/4,
+"TnPTree_EGamma3_2025_Run2025C_3.root": 20.78/4,
+"TnPTree_EGamma3_2025_Run2025D_3.root": 25.29/4,
+"TnPTree_EGamma3_2025_Run2025E_3.root": 14.0/4,
+"TnPTree_EGamma3_2025_Run2025F_3.root": 16.11/4,
+}
+
+# for sed in ['seeded', 'unseeded']:
+for filename, lumi in dict_2025.items():
+    sample_name = 'data_' + filename.replace('TnPTree_', '').replace('.root', '')
+    Prompt2025[sample_name] = tnpSample(sample_name, dir_prefix_2025 + f'/2025/data/{filename}', lumi=lumi)

@@ -1,6 +1,6 @@
 	CC = g++
 
-CFLAGS = $(shell root-config --cflags)
+CFLAGS = $(shell root-config --cflags) -std=c++17 -D_GLIBCXX_USE_CXX11_ABI=0
 LDFLAGS = $(shell root-config --libs)
 
 .PHONY: build
