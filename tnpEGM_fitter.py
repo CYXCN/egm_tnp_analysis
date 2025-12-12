@@ -190,24 +190,46 @@ test_bin_number = len(tnpBins['bins'])
 test_list = range(test_bin_number)
 
 if  args.doFit:
+    import glob
     print(" ======== Fitting ========")
     sampleToFit.dump()
     def parallel_fit(ib):
+        # delete the previous fit file if exists
+        file_name = sampleToFit.nominalFit
+        if args.altSig:
+            file_name = sampleToFit.altSigFit
+        if args.altBkg:
+            file_name = sampleToFit.altBkgFit
+        files = glob.glob( file_name.replace('.root', f"-*{tnpBins['bins'][ib]['name']}.root") )
+        print(f'removing previous fit files for bin {ib}: {files}')
+        os.system(f'rm -f {files}')
         if (args.binNumber >= 0 and ib == args.binNumber):
             print('using looser fit for bin ', ib)
             if args.altSig and not args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFitLooser )
+                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCBLooser, useDSCB=True )
+                else:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFitLooser )
             elif args.altSig and args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
+                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCBLooser_addGaus, 1, useDSCB=True )
+                else:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
             elif args.altBkg:
                 tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFitLooser )
             else:
                 tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFitLooser )
         if args.binNumber < 0:
             if args.altSig and not args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit )
+                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCB, useDSCB=True )
+                else:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit )
             elif args.altSig and args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
+                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCB_addGaus, 1, useDSCB=True )
+                else:
+                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
             elif args.altBkg:
                 tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFit )
             else:

@@ -2,6 +2,7 @@ import ROOT as rt
 rt.gROOT.LoadMacro('./libCpp/histFitter.C+')
 rt.gROOT.LoadMacro('./libCpp/RooCBExGaussShape.cc+')
 rt.gROOT.LoadMacro('./libCpp/RooCMSShape.cc+')
+rt.gROOT.LoadMacro('./libCpp/RooTwoSigmaDSCBShape.cc+')
 rt.gROOT.SetBatch(1)
 
 from ROOT import tnpFitter
@@ -20,12 +21,13 @@ def ptMin( tnpBin ):
         ptmin = float(tnpBin['name'].split('et_')[1].split('p')[0])
     return ptmin
 
-def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
+def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam, tailleft=0, useDSCB=False ):
 
     ### tricky: use n < 0 for high pT bin (so need to remove param and add it back)
     cbNList = ['tailLeft']
-    ptmin = ptMin(tnpBin)        
-    if ptmin >= 35 :
+    ptmin = ptMin(tnpBin)       
+    def _setting_tailright():
+        print('--- Using Right tail for fitting ---')
         for par in cbNList:
             for ip in range(len(tnpWorkspaceParam)):
                 x=re.compile('%s.*?' % par)
@@ -34,6 +36,13 @@ def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
                     print('**** remove', ir)
                     tnpWorkspaceParam.remove(ir)                    
             tnpWorkspaceParam.append( 'tailLeft[-1]' )
+    
+    if not useDSCB:
+        if tailleft==0:
+            if ptmin >= 35 :
+                _setting_tailright()
+        elif tailleft==-1:
+            _setting_tailright()
 
     if sample.isMC:
         return tnpWorkspaceParam
@@ -47,6 +56,8 @@ def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
     fitresF = filemc.Get( '%s_resF' % tnpBin['name'] )
 
     listOfParam = ['nF','alphaF','nP','alphaP','sigmaP','sigmaF','sigmaP_2','sigmaF_2','meanGF','sigmaGF', 'sigFracF']
+    if useDSCB:
+        listOfParam += ['nF_2','alphaF_2','nP_2','alphaP_2']
     
     fitPar = fitresF.floatParsFinal()
     for ipar in range(len(fitPar)):
@@ -136,17 +147,54 @@ def histFitterNominal( sample, tnpBin, tnpWorkspaceParam ):
 #############################################################
 ########## alternate signal fitter
 #############################################################
-def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0 ):
+def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0, useDSCB=False, doMcPreFit=True ):
 
-    tnpWorkspacePar = createWorkspaceForAltSig( sample,  tnpBin, tnpWorkspaceParam )
+    tailLeft = 0
+    if doMcPreFit:
+        if sample.isMC:
+            print('---- Doing MC pre-fit to get signal parameters ----')
+            if useDSCB:
+                from . import mcPreFit_DCB
+                newParam, setting = mcPreFit_DCB.perform_pre_AltSigFit( sample, tnpBin, tnpWorkspaceParam, do_plot=True )
+                mcFitLow = mcPreFit_DCB.extract_fit_range_from_bin(tnpBin.get('name',''))
+            else:
+                from . import mcPreFit
+                newParam, setting = mcPreFit.perform_pre_AltSigFit( sample, tnpBin, tnpWorkspaceParam, do_plot=True )
+            tnpWorkspaceParam = newParam
+            print('---- Using MC pre-fit settings ----')
+            print(tnpWorkspaceParam)
+            tailLeft = setting.get('tailLeft', 0)
+        elif not useDSCB: # only in data and 
+            import os
+            pathToCheck = os.path.join(os.path.dirname(sample.mcRef.histFile), 'python_prefit', sample.mcRef.name, 'result')
+            tnpBin_name = tnpBin['name']
+            tailLeft = 0
+            if os.path.exists(os.path.join(pathToCheck, f"{tnpBin_name}_tailLeft")):
+                tailLeft = 1
+            elif os.path.exists(os.path.join(pathToCheck, f"{tnpBin_name}_tailRight")):
+                tailLeft = -1
+            if tailLeft != 0:
+                print(f'---- Using MC pre-fit settings from {pathToCheck}, tailLeft={tailLeft} ----')
+    
 
-    tnpWorkspaceFunc = [
-        "tailLeft[1]",
-        "RooCBExGaussShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),alphaP,nP, expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),tailLeft)",
-        "RooCBExGaussShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),alphaF,nF, expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),tailLeft)",
-        "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
-        "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
+    tnpWorkspacePar = createWorkspaceForAltSig( sample,  tnpBin, tnpWorkspaceParam, tailleft=tailLeft, useDSCB=useDSCB )
+
+    if useDSCB:
+        print('--- Using Double Crystal Ball + Exponential for fitting ---')
+        tnpWorkspaceFunc = [
+            "RooTwoSigmaDSCBShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),alphaP,nP,alphaP_2,nP_2)",
+            "RooTwoSigmaDSCBShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),alphaF,nF,alphaF_2,nF_2)",
+            "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
+            "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
         ]
+    else:
+        tnpWorkspaceFunc = [
+            "tailLeft[1]",
+            "RooCBExGaussShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),alphaP,nP, expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),tailLeft)",
+            "RooCBExGaussShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),alphaF,nF, expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),tailLeft)",
+            "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
+            "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
+            ]
     if isaddGaus==1:
         tnpWorkspaceFunc += [ "Gaussian::sigGaussFail(x,meanGF,sigmaGF)", ]
         if sample.isMC:
@@ -155,6 +203,9 @@ def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0 ):
     tnpWorkspace = []
     tnpWorkspace.extend(tnpWorkspacePar)
     tnpWorkspace.extend(tnpWorkspaceFunc)
+
+    print('-'*30)
+    print(tnpWorkspace)
         
     ## init fitter
     infile = rt.TFile( sample.histFile, "read")
@@ -164,7 +215,10 @@ def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0 ):
     ## MC only: this is to get MC parameters in data fit!
     if sample.isMC and ptMin( tnpBin ) > minPtForSwitch:     
         hF = infile.Get('%s_Pass' % tnpBin['name'] )
-    fitter = tnpFitter( hP, hF, tnpBin['name'] )
+    if sample.isMC and useDSCB:
+        fitter = tnpFitter( hP, hF, tnpBin['name'], mcFitLow)
+    else:
+        fitter = tnpFitter( hP, hF, tnpBin['name'] )
 #    fitter.fixSigmaFtoSigmaP()
     infile.Close()
 
@@ -183,6 +237,7 @@ def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0 ):
     workspace = rt.vector("string")()
     for iw in tnpWorkspace:
         workspace.push_back(iw)
+    print(workspace)
     fitter.setWorkspace( workspace, isaddGaus )
 
     title = tnpBin['title'].replace(';',' - ')

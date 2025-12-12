@@ -28,7 +28,7 @@ flags = {
     'passingHLTUnseeded' : '(passhltEG22R9Id85b90eHE12R9Id50b80eR9UnseededLastFilter == 1) && (passhltEG22Iso60CaloId15b35eHE12R9Id50b80eTrackIsoUnseededLastFilter == 1)',
     }
 
-baseOutDir = '/eos/user/y/yucao/program/trigger/CMSSW_11_2_0/src/egm_tnp_analysis/output3/'
+baseOutDir = '/eos/user/y/yucao/program/trigger/CMSSW_11_2_0/src/egm_tnp_analysis/output4/'
 
 #############################################################
 ########## samples definition  - preparing the samples
@@ -201,6 +201,8 @@ additionalCuts = {
 #############################################################
 ########## fitting params to tune fit by hand if necessary
 #############################################################
+AltSigFitUsingDSCB = True
+
 tnpParNomFit = [
     "meanP[-0.0,-5.0,5.0]","sigmaP[0.9,0.5,5.0]",
     "meanF[-0.0,-5.0,5.0]","sigmaF[0.9,0.5,5.0]",
@@ -209,11 +211,26 @@ tnpParNomFit = [
     ]
 
 tnpParAltSigFit = [
-    "meanP[-0.0,-5.0,5.0]","sigmaP[1,0.7,6.0]","alphaP[2.0,1.2,3.5]" ,'nP[3,-5,5]',"sigmaP_2[1.5,0.5,6.0]","sosP[1,0.5,5.0]",
-    "meanF[-0.0,-5.0,5.0]","sigmaF[2,0.7,15.0]","alphaF[2.0,1.2,3.5]",'nF[3,-5,5]',"sigmaF_2[2.0,0.5,6.0]","sosF[1,0.5,5.0]",
+    "meanP[-0.0,-5.0,5.0]","sigmaP[1,1,6.0]","alphaP[2.0,0.5,3.5]" ,'nP[1,0.1,5]',"sigmaP_2[1.5,1,6.0]","sosP[1,0.1,5.0]",
+    "meanF[-0.0,-5.0,5.0]","sigmaF[2,1,15.0]","alphaF[2.0,0.5,3.5]",'nF[1,0.1,5]',"sigmaF_2[2.0,1,6.0]","sosF[1,0.1,5.0]",
     "acmsP[60.,50.,75.]","betaP[0.04,0.01,0.06]","gammaP[0.1, 0.005, 0.5]","peakP[89.0,82.0,90.0]",
     "acmsF[60.,50.,75.]","betaF[0.04,0.01,0.06]","gammaF[0.1, 0.005, 0.5]","peakF[89.0,82.0,90.0]",
     ]
+tnpParAltSigFit_DSCB = [
+    "meanP[-0.0,-5.0,5.0]", "sigmaP[1,1,6.0]", "sigmaP_2[1.5,1,6.0]",
+    "alphaP[2.0,0.5,5.0]", "nP[2.0,0.1,10]",
+    "alphaP_2[2.0,0.5,5.0]", "nP_2[2.0,0.1,10]", # New Right Tail Params
+    "sosP[1,0.0,5.0]",
+
+    "meanF[-0.0,-5.0,5.0]", "sigmaF[2,1,15.0]", "sigmaF_2[2.0,1,15.0]",
+    "alphaF[2.0,0.5,5.0]", "nF[2.0,0.1,10]",
+    "alphaF_2[2.0,0.5,5.0]", "nF_2[2.0,0.1,10]", # New Right Tail Params
+    "sosF[1,0.0,5.0]",
+    
+    # Background parameters (unused in signal fit but kept for format)
+    "acmsP[60.,50.,75.]", "betaP[0.04,0.01,0.06]", "gammaP[0.1, 0.005, 0.5]", "peakP[89.0,82.0,90.0]",
+    "acmsF[60.,50.,75.]", "betaF[0.04,0.01,0.06]", "gammaF[0.1, 0.005, 0.5]", "peakF[89.0,82.0,90.0]",
+]
      
 tnpParAltBkgFit = [
     "meanP[-0.0,-5.0,5.0]","sigmaP[0.9,0.5,5.0]",
@@ -245,5 +262,12 @@ def make_looser_ranges(parList, factor=1.0):
     return newParList        
 
 tnpParNomFitLooser = make_looser_ranges(tnpParNomFit)
+# [
+#     "meanP[-0.0,-5.0,5.0]","sigmaP[0.9,0.5,5.0]",
+#     "meanF[-0.0,-5.0,5.0]","sigmaF[0.9,0.5,5.0]",
+#     "acmsP[60.,40.,120.]","betaP[0.05,0.01,0.16]","gammaP[0.1, -0.1, 0.5]","peakP[87.0,82.0,90.0]",
+#     "acmsF[60.,40.,120.]","betaF[0.05,0.01,0.16]","gammaF[0.1, -0.1, 0.5]","peakF[87.0,82.0,90.0]",
+#     ]
 tnpParAltSigFitLooser = make_looser_ranges(tnpParAltSigFit)
 tnpParAltBkgFitLooser = make_looser_ranges(tnpParAltBkgFit)
+tnpParAltSigFit_DSCBLooser = make_looser_ranges(tnpParAltSigFit_DSCB)
