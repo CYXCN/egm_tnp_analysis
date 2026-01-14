@@ -45,7 +45,7 @@ def createBins(bining, cut, to_correct_cut=None):
     Supports distinguishing between standard variables and corrected variables.
     
     bining: list of dicts or dict of lists (regions)
-    cut: Base cut string for standard variables
+    cut: Base cut string for standard variables (will be extracted as baseSelection)
     to_correct_cut: Base cut string for variables that need correction
     """
 
@@ -95,7 +95,8 @@ def createBins(bining, cut, to_correct_cut=None):
         
         return {
             'vars': all_vars,
-            'bins': all_bins
+            'bins': all_bins,
+            'baseSelection': cut  # Add baseSelection at top level
         }
 
     # --- 2. Handle single list (List Mode) ---
@@ -120,7 +121,11 @@ def createBins(bining, cut, to_correct_cut=None):
         if 'type' not in bining[iv] or 'bins' not in bining[iv]:
             print(('bining is not complete for var %s' % var_raw))
             # Fallback return with base cuts
-            return [{'cut': cut, 'cor_cut': to_correct_cut}]
+            return {
+                'vars': [],
+                'bins': [{'cut': None, 'cor_cut': parse_and_to_list(to_correct_cut) if to_correct_cut else []}],
+                'baseSelection': cut
+            }
 
         bins_spec = bining[iv]['bins']
         nb1D = 1
@@ -153,13 +158,11 @@ def createBins(bining, cut, to_correct_cut=None):
 
     ### Generate specific bin definitions
     for ix in listOfIndex:
-        # Initialize current bin variables
-        binCut = None
+        # Initialize current bin variables - no longer include base cut here
+        binCut = None  # Only store bin-specific cuts
         binCorCut = None  # New: for corrected variable cuts
         
-        # Set base cut
-        if cut is not None:
-            binCut = cut
+        # Do NOT add base cut here - it will be in baseSelection
         if to_correct_cut is not None:
             binCorCut = to_correct_cut
 
@@ -270,7 +273,7 @@ def createBins(bining, cut, to_correct_cut=None):
 
         # Append to result list, adding cor_cut field
         listOfBins.append({
-            'cut': binCut, 
+            'cut': binCut,  # Now only contains bin-specific cuts
             'cor_cut': parse_and_to_list(binCorCut), 
             'title': binTitle, 
             'name': binName, 
@@ -293,9 +296,10 @@ def createBins(bining, cut, to_correct_cut=None):
             listOfVars.append(var_raw)
     
     binDefinition = {
-        'vars' : listOfVars,
-        'bins' : listOfBins
-        } 
+        'vars': listOfVars,
+        'bins': listOfBins,
+        'baseSelection': cut  # Add baseSelection as independent field
+    } 
     return binDefinition
 
 def tuneCuts( bindef, cuts ) :

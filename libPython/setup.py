@@ -14,7 +14,10 @@ else:
     USE_CYTHON = False
 ext = '.pyx' if USE_CYTHON else '.cpp'
 
-sourcefiles  = ["histUtils" + ext]
+# swith to new histUtils, to choice: histUtils or new_histUtils
+histUtils_used = 'new_histUtils'
+
+sourcefiles  = [histUtils_used + ext]
 
 try:
     import correctionlib
@@ -27,7 +30,7 @@ try:
 except ImportError:
     raise RuntimeError("correctionlib not found. Please install it: pip install correctionlib")
 
-extensions=[Extension('histUtils',
+extensions=[Extension(histUtils_used,
             sourcefiles,
             language='c++',
             include_dirs=include_dirs,

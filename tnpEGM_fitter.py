@@ -1,4 +1,3 @@
-
 ### python specific import
 import argparse
 import os
@@ -21,12 +20,13 @@ parser.add_argument('--doFit'      , action='store_true'  , help = 'fit sample (
 parser.add_argument('--mcSig'      , action='store_true'  , help = 'fit MC nom [to init fit parama]')
 parser.add_argument('--doPlot'     , action='store_true'  , help = 'plotting')
 parser.add_argument('--sumUp'      , action='store_true'  , help = 'sum up efficiencies')
-parser.add_argument('--iBin'       , dest = 'binNumber'   , type = int,  default=-1, help='bin number (to refit individual bin)')
+parser.add_argument('--iBin'       , dest = 'binNumber'   , type = str,  default='-1', help='bin number (to refit individual bin), support multiple bins separated by comma, e.g. "0,1,2" or range "0-5"')
 parser.add_argument('--flag'       , default = None       , help ='WP to test')
 parser.add_argument('settings'     , default = None       , help = 'setting file [mandatory]')
 
 parser.add_argument('--doCor'      , dest = 'doCorrection', action='store_true'  , help = 'do scale and smearing correction')
 parser.add_argument('--year'       , default = '2024', help = 'year config used for correction' )
+parser.add_argument('--useGenZee'  , action='store_true'  , help = 'use ZeeGenLevel for Z line shape in nominal fit')
 
 
 args = parser.parse_args()
@@ -123,7 +123,7 @@ if args.createHists:
             for k, v in obj.items():
                 if k in ['name', 'title'] and isinstance(v, str):
                     new_dict[k] = v.encode('utf-8')
-                elif k in ['cut'] and isinstance(v, str):
+                elif k in ['cut', 'baseSelection'] and isinstance(v, str):
                     new_dict[k] = v
                 else:
                     new_dict[k] = tnpBins_converter(v)
@@ -133,6 +133,11 @@ if args.createHists:
         elif isinstance(obj, str):
             return obj.encode('utf-8')
         return obj
+
+    branch_mapping = tnpConf.branch_mapping if hasattr(tnpConf, 'branch_mapping') else None
+    r9Eta_reweighting = tnpConf.r9Eta_reweighting if hasattr(tnpConf, 'r9Eta_reweighting') else None
+    if r9Eta_reweighting:
+        print(f'apply R9-Eta reweighting using {r9Eta_reweighting} file')
 
     tnpBins_to_pass = copy.deepcopy(tnpBins)
     tnpBins_to_pass = tnpBins_converter(tnpBins_to_pass)
@@ -149,12 +154,15 @@ if args.createHists:
             if hasattr(sample, 'tree') and isinstance(getattr(sample, 'tree'), str):
                 setattr(sample, 'tree', getattr(sample, 'tree').encode('utf-8'))
             # 2. `tnpBins` must be converted
-            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_year)
+            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_year, branch_mapping, r9Eta_reweighting)#, max_event = 10000000)
     
-    with mp.Pool() as pool:
+    num_samples = len(list(tnpConf.samplesDef.keys()))
+    num_processes = min(num_samples, mp.cpu_count())
+    
+    with mp.Pool(processes=num_processes) as pool:
         pool.map(parallel_hists, tnpConf.samplesDef.keys())
     # # debug for MC
-    # parallel_hists('mcNom')
+    # parallel_hists('data')
 
     sys.exit(0)
 
@@ -189,6 +197,30 @@ if args.mcSig :
 test_bin_number = len(tnpBins['bins'])
 test_list = range(test_bin_number)
 
+# Parse bin numbers
+def parse_bin_numbers(bin_str, max_bin):
+    """Parse bin number string, support formats like '0,1,2' or '0-5' or '-1' for all bins"""
+    bin_str = bin_str.strip()
+    if bin_str == '-1':
+        return list(range(max_bin))
+    
+    bins = set()
+    for part in bin_str.split(','):
+        part = part.strip()
+        if '-' in part and part != '-1':
+            # Range format: "0-5"
+            start, end = part.split('-')
+            bins.update(range(int(start), int(end) + 1))
+        else:
+            # Single bin
+            bins.add(int(part))
+    
+    # Filter valid bins
+    return sorted([b for b in bins if 0 <= b < max_bin])
+
+selected_bins = parse_bin_numbers(args.binNumber, test_bin_number)
+print(f'Selected bins to process: {selected_bins}')
+
 if  args.doFit:
     import glob
     print(" ======== Fitting ========")
@@ -201,46 +233,53 @@ if  args.doFit:
         if args.altBkg:
             file_name = sampleToFit.altBkgFit
         files = glob.glob( file_name.replace('.root', f"-*{tnpBins['bins'][ib]['name']}.root") )
-        print(f'removing previous fit files for bin {ib}: {files}')
+        print(f'[WARNING] removing previous fit files for bin {ib}: {files}')
         os.system(f'rm -f {files}')
-        if (args.binNumber >= 0 and ib == args.binNumber):
-            print('using looser fit for bin ', ib)
-            if args.altSig and not args.addGaus:
-                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCBLooser, useDSCB=True )
-                else:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFitLooser )
-            elif args.altSig and args.addGaus:
-                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCBLooser_addGaus, 1, useDSCB=True )
-                else:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
-            elif args.altBkg:
-                tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFitLooser )
-            else:
-                tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFitLooser )
-        if args.binNumber < 0:
-            if args.altSig and not args.addGaus:
-                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCB, useDSCB=True )
-                else:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit )
-            elif args.altSig and args.addGaus:
-                if hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_DSCB_addGaus, 1, useDSCB=True )
-                else:
-                    tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
-            elif args.altBkg:
-                tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFit )
-            else:
-                tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFit )
 
-    timeout_seconds = 2000 if args.binNumber < 0 else 10000
+        is_looser = len(selected_bins) < test_bin_number
+        if is_looser: print(f'using looser fit for bin {ib}')
+        
+        curr_bin = tnpBins['bins'][ib]
+        fit_func = None
+        fit_args = [sampleToFit, curr_bin]
+        fit_kwargs = {}
+
+        # determine fit function and parameters
+        if args.altSig:
+            fit_func = tnpRoot.histFitterAltSig
+            use_dscb = hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB
+            fit_kwargs['useDSCB'] = use_dscb
+            if use_dscb:
+                params = "tnpParAltSigFit_DSCB"
+            else: 
+                params = "tnpParAltSigFit"
+        elif args.altBkg:
+            fit_func = tnpRoot.histFitterAltBkg
+            params = "tnpParAltBkgFit"
+        else:
+            fit_func = tnpRoot.histFitterNominal
+            params = "tnpParNomFit"
+            fit_kwargs['useGenZee'] = args.useGenZee
+        
+        if is_looser:
+            params = params + "Looser"
+        
+        if args.altSig and args.addGaus:
+            params += "_addGaus"
+            fit_kwargs['isaddGaus'] = True
+        
+        fit_args.append( getattr(tnpConf, params) )
+
+        # perform fit
+        if fit_func:
+            fit_func(*fit_args, **fit_kwargs)
+
+    timeout_seconds = 10000 if len(selected_bins) < test_bin_number else 2000
     timeout_log = os.path.join(outputDirectory, 'timeout.txt')
     
     tasks_to_run = []
     for ib in test_list:
-        if ((args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0):
+        if ib in selected_bins:
             tasks_to_run.append(ib)
     import time
     max_procs = mp.cpu_count()
@@ -286,8 +325,8 @@ if  args.doFit:
 
     # parallel_fit(121)
     # exit()
-    if args.binNumber >= 0:
-        print('fitting for bin %d done' % args.binNumber)
+    if len(selected_bins) < test_bin_number:
+        print(f'fitting for bins {selected_bins} done')
         sys.exit(0)
     args.doPlot = True
 ####################################################################
@@ -326,7 +365,7 @@ if  args.doPlot:
     shutil.copy('etc/inputs/index.php.listPlots','%s/index.php' % plottingDir)
 
     for ib in range(test_bin_number):#range(len(tnpBins['bins'])):
-        if (args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0:
+        if ib in selected_bins:
             if ib in invalid_bin_list:
                 print(f"[tnpEGM_fitter] skipping plotting for invalid bin {ib}")
                 continue
@@ -358,60 +397,98 @@ if args.sumUp:
         info['tagSel'   ] = tnpConf.samplesDef['tagSel'].histFile
 
     effis = None
-    effFileName ='%s/egammaEffi.txt' % outputDirectory 
-    fOut = open( effFileName,'w')
-    
-    for ib in range(len(tnpBins['bins'])):
-        print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
-        effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib] )
+    out_format = 'json'
+    if out_format == 'txt':
+        effFileName ='%s/egammaEffi.txt' % outputDirectory 
+        fOut = open(effFileName, 'w')
 
-        ### formatting for arbitrary N-D binning
-        title_parts = tnpBins['bins'][ib]['title'].split(';')
-        n_vars = len(title_parts) - 1
-        
-        var_ranges = []
-        for i in range(1, n_vars + 1):
-            var_range = title_parts[i].split('<')
-            if '>' in title_parts[i]:
-                var_range = title_parts[i].replace('=','').split('>')
-                var_range = [var_range[1], 'xxx', 9999]
-            var_ranges.append(var_range)
-        
-        if ib == 0:
-            print(tnpBins['bins'][ib]['title'])
-            for i, var_range in enumerate(var_ranges, 1):
-                astr = '### var%d : %s' % (i, var_range[1])
-                print(astr)
-                fOut.write(astr + '\n')
+        if len(tnpBins['bins']) > 0:
+            n_vars = len(tnpBins['bins'][0]['title'].split(';'))
+            var_headers = []
+            for i in range(1, n_vars + 1):
+                var_headers.extend([f'var{i}_low', f'var{i}_high'])
+            eff_headers = [
+                'dataNom_eff', 'dataNom_err',
+                'mcNom_eff', 'mcNom_err',
+                'dataAltBkg_eff',
+                'dataAltSig_eff',
+                'mcAlt_eff',
+                'tagSel_eff'
+            ]
+            header_line = '\t'.join(var_headers + eff_headers)
+            fOut.write('# ' + header_line + '\n')
+        # ====================
 
-        format_parts = []
-        values = []
-        
-        for var_range in var_ranges:
-            format_parts.extend(['%+8.5f', '%+8.5f'])
-            values.extend([float(var_range[0]), float(var_range[2])])
-        
-        # add efficiency values
-        # value handel: if XXX[0] == 0.5 then set to 0 as 0.5 is default for almost zero stat
-        for key in ['dataNominal', 'mcNominal', 'dataAltBkg', 'dataAltSig', 'mcAlt', 'tagSel']:
-            if key in effis:
-                if abs(effis[key][0] - 0.50000) < 1e-5:
-                    effis[key][0] = 0.0
-        format_parts.extend(['%5.5f'] * 8)
-        values.extend([
-            effis['dataNominal'][0], effis['dataNominal'][1],
-            effis['mcNominal'][0], effis['mcNominal'][1],
-            effis['dataAltBkg'][0],
-            effis['dataAltSig'][0],
-            effis['mcAlt'][0],
-            effis['tagSel'][0],
-        ])
-        astr = '\t'.join(format_parts) % tuple(values)
-        print(astr)
-        fOut.write(astr + '\n')
-    fOut.close()
+        for ib in range(len(tnpBins['bins'])):
+            print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
+            effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib] )
 
-    print('Effis saved in file : ',  effFileName)
-    import libPython.new_EGammaID_scaleFactors as egm_sf
-    egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
-    exit(0)
+            ### formatting for arbitrary N-D binning
+            title_parts = tnpBins['bins'][ib]['title'].split(';')
+            n_vars = len(title_parts)
+            
+            var_ranges = []
+            for i in range(0, n_vars ):
+                var_range = title_parts[i].split('<')
+                if '>' in title_parts[i]:
+                    var_range = title_parts[i].replace('=','').split('>')
+                    var_range = [var_range[1], 'xxx', 9999]
+                var_ranges.append(var_range)
+            
+            if ib == 0:
+                print(tnpBins['bins'][ib]['title'])
+                for i, var_range in enumerate(var_ranges, 1):
+                    astr = '### var%d : %s' % (i, var_range[1])
+                    print(astr)
+                    fOut.write(astr + '\n')
+
+            format_parts = []
+            values = []
+            
+            for var_range in var_ranges:
+                format_parts.extend(['%+8.5f', '%+8.5f'])
+                values.extend([float(var_range[0]), float(var_range[2])])
+            
+            # add efficiency values
+            # value handel: if XXX[0] == 0.5 then set to 0 as 0.5 is default for almost zero stat
+            for key in ['dataNominal', 'mcNominal', 'dataAltBkg', 'dataAltSig', 'mcAlt', 'tagSel']:
+                if key in effis:
+                    if abs(effis[key][0] - 0.50000) < 1e-5:
+                        effis[key][0] = 0.0
+            format_parts.extend(['%5.5f'] * 8)
+            values.extend([
+                effis['dataNominal'][0], effis['dataNominal'][1],
+                effis['mcNominal'][0], effis['mcNominal'][1],
+                effis['dataAltBkg'][0],
+                effis['dataAltSig'][0],
+                effis['mcAlt'][0],
+                effis['tagSel'][0],
+            ])
+            astr = '\t'.join(format_parts) % tuple(values)
+            print(astr)
+            fOut.write(astr + '\n')
+
+        fOut.close()
+
+        print('Effis saved in file : ',  effFileName)
+        import libPython.new_EGammaID_scaleFactors as egm_sf
+        egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
+        exit(0)
+    elif out_format == 'json':
+        effFileName ='%s/egammaEffi.json' % outputDirectory 
+        import json
+        effis_all = {}
+        for ib in range(len(tnpBins['bins'])):
+            print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
+            effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib], out_level='json' )
+            effis_all[tnpBins['bins'][ib]['name']] = {
+                'tittle'      : tnpBins['bins'][ib]['title'],
+                'def'         : tnpBins['bins'][ib]['vars'],
+                'info' : effis
+            }
+        with open(effFileName, 'w') as fOut:
+            json.dump( effis_all, fOut, indent=4)
+        print('Effis saved in file : ',  effFileName)
+        import libPython.new_EGammaID_scaleFactors as egm_sf
+        egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
+        exit(0)

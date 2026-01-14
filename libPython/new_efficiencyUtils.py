@@ -58,7 +58,15 @@ class efficiency:
         self.syst[self.iAltTagSelec+2] = systAltTagSelec
         
         self.systCombined = math.sqrt(sum(s**2 for s in self.syst if s is not None and s >= 0))
-        
+
+    def getSF(self):
+        return self.effData / self.effMC if self.effMC > 0 else 1.0
+
+    def getSFError(self):
+        sf = self.getSF()
+        if self.effData > 0 and self.effMC > 0:
+            return sf * math.sqrt((self.systCombined/self.effData)**2 + (self.errEffMC/self.effMC)**2)
+        return 0.0
 
     def __add__(self,eff):
         if self.effData < 0 :
@@ -87,7 +95,124 @@ class efficiency:
         effout = efficiency(self.bins,newEffData,newErrEffData,newEffMC,newErrEffMC,newEffAltBkgModel,newEffAltSigModel,newEffAltMCSignal,newEffAltTagSelec)
         return effout
     
+class efficiencyJson:
+    """
+    A class to hold efficiency data loaded from JSON, preserving raw counts for precise combination.
+    """
+    iAltBkgModel = 0
+    iAltSigModel = 1
+    iAltMCSignal = 2
+    iAltTagSelec = 3
+    iPUup        = 4
+    iPUdown      = 5
+    iAltFitRange = 6
 
+    def __init__(self, bins, info):
+        self.bins = bins
+        self.info = info
+        self.syst = [-1]*9
+        self.systCombined = 0
+
+    def deepcopy(self):
+        import copy
+        return efficiencyJson(self.bins, copy.deepcopy(self.info))
+
+    def _get_eff_err(self, key):
+        if key in self.info and self.info[key]['eff'] >= 0:
+            return self.info[key]['eff'], self.info[key]['error']
+        return -1, 0
+
+    @property
+    def effData(self): return self._get_eff_err('dataNominal')[0]
+    @property
+    def errEffData(self): return self._get_eff_err('dataNominal')[1]
+    @property
+    def effMC(self): return self._get_eff_err('mcNominal')[0]
+    @property
+    def errEffMC(self): return self._get_eff_err('mcNominal')[1]
+
+    @property
+    def altEff(self):
+        res = [-1]*7
+        res[0] = self._get_eff_err('dataAltBkg')[0]
+        res[1] = self._get_eff_err('dataAltSig')[0]
+        res[2] = self._get_eff_err('mcAlt')[0]
+        res[3] = self._get_eff_err('tagSel')[0]
+        return res
+
+    def combineSyst(self):
+        eff_data = self.effData
+        eff_mc = self.effMC
+        alt_eff = self.altEff
+        
+        systAltBkg      = alt_eff[0] - eff_data if alt_eff[0] >= 0 else 0
+        systAltSig      = alt_eff[1] - eff_data if alt_eff[1] >= 0 else 0
+        systAltMC       = alt_eff[2] - eff_mc   if alt_eff[2] >= 0 else 0
+        systAltTagSelec = alt_eff[3] - eff_mc   if alt_eff[3] >= 0 else 0
+
+        self.syst[0] = self.errEffData
+        self.syst[1] = self.errEffMC
+        self.syst[2] = systAltBkg
+        self.syst[3] = systAltSig
+        self.syst[4] = systAltMC
+        self.syst[5] = systAltTagSelec
+        
+        self.systCombined = math.sqrt(sum(s**2 for s in self.syst if s is not None and s >= 0))
+
+    def getSF(self):
+        return self.effData / self.effMC if self.effMC > 0 else 1.0
+
+    def getSFError(self):
+        sf = self.getSF()
+        if self.effData > 0 and self.effMC > 0:
+            return sf * math.sqrt((self.systCombined/self.effData)**2 + (self.errEffMC/self.effMC)**2)
+        return 0.0
+
+    def __str__(self):
+        bin_str = "\t".join([f"{b[0]:.3f}\t{b[1]:.3f}" for b in self.bins])
+        val_str = f"{self.effData:.4f}\t{self.errEffData:.4f}\t{self.effMC:.4f}\t{self.errEffMC:.4f}"
+        alt_str = "\t".join([f"{x:.4f}" for x in self.altEff[:4]])
+        return f"{bin_str}\t{val_str}\t{alt_str}"
+
+    def __add__(self, other):
+        if self.effData < 0: return other.deepcopy()
+        if other.effData < 0: return self.deepcopy()
+
+        new_info = {}
+        keys = ['dataNominal', 'mcNominal', 'dataAltBkg', 'dataAltSig', 'mcAlt', 'tagSel']
+        
+        for k in keys:
+            d1 = self.info.get(k)
+            d2 = other.info.get(k)
+            
+            if not d1 and not d2: continue
+            
+            def get_c(d):
+                if d: return d['nSigP'], d['nSigF'], d['errP'], d['errF']
+                return 0.0, 0.0, 0.0, 0.0
+            
+            nP1, nF1, eP1, eF1 = get_c(d1)
+            nP2, nF2, eP2, eF2 = get_c(d2)
+            
+            nP = nP1 + nP2
+            nF = nF1 + nF2
+            eP = math.sqrt(eP1**2 + eP2**2)
+            eF = math.sqrt(eF1**2 + eF2**2)
+            
+            eff = 0
+            err = 0
+            denom = nP + nF
+            if denom > 0:
+                eff = nP / denom
+                err = (1.0/denom**2) * math.sqrt(nF**2 * eP**2 + nP**2 * eF**2)
+            
+            new_info[k] = {
+                'nSigP': nP, 'nSigF': nF,
+                'errP': eP, 'errF': eF,
+                'eff': eff, 'error': err
+            }
+            
+        return efficiencyJson(self.bins, new_info)
 
 import ROOT as rt
 import numpy as np
@@ -247,7 +372,7 @@ class efficiencyList:
             other_bins_dict = {k: v for k, v in entry['bindef'].items() if k != plot_var}
             # stable string key for grouping (safe and readable)
             final_bin_names = bin_name_conversion(other_bins_dict, bin_name_dict) 
-            key_str = ", ".join(final_bin_names) if final_bin_names else "Full Range"
+            key_str = ";".join(final_bin_names) if final_bin_names else "Full Range"
 
             if key_str not in projected_effs:
                 projected_effs[key_str] = []
@@ -259,8 +384,8 @@ class efficiencyList:
             for eff in eff_list:
                 val, err = eff.effData, eff.systCombined
                 if do_sf:
-                    val = eff.effData / eff.effMC if eff.effMC > 0 else 1
-                    err = val * math.sqrt((eff.systCombined/eff.effData)**2 + (eff.errEffMC/eff.effMC)**2) if eff.effData > 0 and eff.effMC > 0 else 0
+                    val = eff.getSF()
+                    err = eff.getSFError()
                 elif do_mc:
                     val, err = eff.effMC, eff.errEffMC
 
@@ -270,6 +395,82 @@ class efficiencyList:
             graphs[key_str] = graph_points
             
         return graphs
+
+    def get_1d_summation(self, plot_var, slice_vars={}, do_sf=False, do_mc=False, bin_name_dict=None):
+        """
+        Projects the efficiencies onto one variable by summing raw counts over other dimensions.
+        This requires the efficiency objects to be of type efficiencyJson.
+        """
+        if plot_var not in self.var_map:
+            raise ValueError(f"Variable '{plot_var}' not found. Available: {self.var_names}")
+
+        plot_idx = self.var_map[plot_var]
+        
+        # Dictionary to store summed efficiency for each bin of plot_var
+        summed_effs = {} 
+        
+        # Track min/max of other variables to generate a label
+        other_vars_ranges = {} # var_name -> [min, max]
+
+        self._ensure_eff_dict()
+        
+        for entry in self.efficiency_dict.values():
+            eff = entry['efficiency']
+            
+            # Skip if not efficiencyJson as we need raw counts
+            if not isinstance(eff, efficiencyJson):
+                continue
+
+            # Check slicing conditions
+            in_slice = all(
+                var_name == plot_var or (eff.bins[self.var_map[var_name]][0] >= slice_min and eff.bins[self.var_map[var_name]][1] <= slice_max)
+                for var_name, (slice_min, slice_max) in slice_vars.items()
+            )
+            if not in_slice: 
+                continue
+
+            # Update ranges for other variables
+            for name, (bmin, bmax) in entry['bindef'].items():
+                if name == plot_var: continue
+                if name not in other_vars_ranges:
+                    other_vars_ranges[name] = [bmin, bmax]
+                else:
+                    other_vars_ranges[name][0] = min(other_vars_ranges[name][0], bmin)
+                    other_vars_ranges[name][1] = max(other_vars_ranges[name][1], bmax)
+
+            # Identify the bin for the plot_var
+            bin_key = eff.bins[plot_idx] # (min, max)
+            
+            if bin_key not in summed_effs:
+                summed_effs[bin_key] = eff.deepcopy()
+            else:
+                summed_effs[bin_key] = summed_effs[bin_key] + eff
+
+        # Generate label
+        label_parts = []
+        # Use var_names order for consistency
+        for name in self.var_names:
+            if name == plot_var: continue
+            if name in other_vars_ranges:
+                vmin, vmax = other_vars_ranges[name]
+                label_parts.append(f"{vmin:.2f}<{name}<{vmax:.2f}")
+        
+        label = ", ".join(label_parts) if label_parts else "Summed"
+
+        graph_points = []
+        for bin_key, eff in summed_effs.items():
+            eff.combineSyst() # Calculate systematics on the summed counts
+            
+            val, err = eff.effData, eff.systCombined
+            if do_sf:
+                val = eff.getSF()
+                err = eff.getSFError()
+            elif do_mc:
+                val, err = eff.effMC, eff.errEffMC
+
+            graph_points.append({'min': bin_key[0], 'max': bin_key[1], 'val': val, 'err': err})
+            
+        return {label: graph_points}
 
     def get_2d_histogram(self, x_var, y_var, slice_vars={}, content_type='sf'):
         """
@@ -342,12 +543,8 @@ class efficiencyList:
             bin_y_center = (eff.bins[y_idx][0] + eff.bins[y_idx][1]) / 2
             
             val, err = 0, 0
-            sf = eff.effData / eff.effMC if eff.effMC > 0 else 1
-            sf_err = 0
-            if eff.effData > 0 and eff.effMC > 0:
-                # total SF uncertainty propagated (approx)
-                sf_err = sf * math.sqrt((eff.systCombined/eff.effData)**2 + (eff.errEffMC/eff.effMC)**2)
-
+            sf = eff.getSF()
+            sf_err = eff.getSFError()
             if per_syst_idx is not None and per_syst_idx < len(eff.syst):
                 # Produce per-systematic maps
                 if per_syst_mode == 'rel':

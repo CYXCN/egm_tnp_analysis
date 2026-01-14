@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 import sys,os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from math import sqrt
 import ROOT as rt
-from . import CMS_lumi, tdrstyle
-from .new_efficiencyUtils import *
+import CMS_lumi, tdrstyle
+from new_efficiencyUtils import *
 
 # --- Style and Configuration ---
 tdrstyle.setTDRStyle()
@@ -27,8 +28,8 @@ def isFloat( myFloat ):
 
 graphColors = [rt.kBlack, rt.kGray+1, rt.kRed +1, rt.kRed-2, rt.kAzure+2, rt.kAzure-1, 
                rt.kSpring-1, rt.kYellow -2 , rt.kYellow+1,
-               rt.kBlack, rt.kBlack, rt.kBlack, 
-               rt.kBlack, rt.kBlack, rt.kBlack, rt.kBlack, rt.kBlack, rt.kBlack, rt.kBlack ]
+               rt.kBlue-7, rt.kGreen+3, rt.kOrange-5, 
+               rt.kMagenta+2, rt.kCyan-4, rt.kPink+1, rt.kTeal-2, rt.kViolet+3, rt.kOrange-3, rt.kOrange+1 ]
 def get_axis_title(var_name):
     """Generates a readable axis title from a variable name."""
     name_lower = var_name.lower()
@@ -60,49 +61,119 @@ def find_min_max_y(graphs, force_min=None, force_max=None):
     return min_y - 0.1 * range_y, max_y + 0.25 * range_y
 
 # --- Plotting Functions ---
+def better_1D_legend(legend, mapping_func=None, sep=';'):
+    def default_mapping(label):
+        import re
+        # if has abs -> ||
+        if 'abs(' in label:
+            label = label.replace('abs(', '|').replace(')', '|')
+        if 'abs_el_sc_eta' in label:
+            label = label.replace('abs_el_sc_eta', '|SC eta|')
+
+        # Remove common particle prefixes if they exist (generic cleanup)
+        label = label.replace('el_', '')
+        label = label.replace('pho_', '')
+
+        label = label.replace('_', ' ')
+
+        if 'sc' in label.lower():
+            label = re.sub(r'sc', 'SC', label, flags=re.IGNORECASE)
+        if 'eta' in label.lower():
+            label = re.sub(r'eta', '#eta', label, flags=re.IGNORECASE)
+        if 'pt' in label.lower():
+            label = re.sub(r'pt', 'p_{T}', label, flags=re.IGNORECASE)
+        if 'et' in label.lower() and 'eta' not in label.lower():
+            label = re.sub(r'et', 'E_{T}', label, flags=re.IGNORECASE)
+        if 'r9' in label.lower():
+            label = re.sub(r'r9', 'R9', label, flags=re.IGNORECASE)
+
+        # remove 0 if not needed (e.g. 20.0 -> 20, but keep 2.5)
+        label = re.sub(r'(\d)\.0+(?!\d)', r'\1', label)
+        return label.strip()
+
+    if mapping_func is None:
+        mapping_func = default_mapping
+
+    for entry in legend.GetListOfPrimitives():
+        label = entry.GetLabel()
+        if sep in label:
+            parts = label.split(sep)
+            new_parts = [mapping_func(part.strip()) for part in parts]
+            entry.SetLabel(sep.join(new_parts))
+        else:
+            entry.SetLabel(mapping_func(entry.GetLabel()))
 
 
-def EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout, plot_var, slice_vars_info):
+def EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout, plot_var, slice_vars_info, eff_range=None, sf_range=None):
 
-    W = 800
-    H = 800
+    has_sf = (len(sf_graphs) > 0)
+
+    W = 1200
+    H = 1200
     yUp = 0.45
-    c = rt.TCanvas(f"c_{plot_var}", f"c_{plot_var}", H, W)
+    c = rt.TCanvas(f"c_{plot_var}", f"c_{plot_var}", W, H)
     c.SetTopMargin(0.055)
     c.SetBottomMargin(0.10)
     c.SetLeftMargin(0.12)
     
     
-    p1 = rt.TPad( 'up', 'up', 0, yUp, 1,   1, 0,0,0)
-    p2 = rt.TPad( 'do', 'do', 0,   0, 1, yUp, 0,0,0)
-    p1.SetBottomMargin(0.0075)
-    p1.SetTopMargin(   c.GetTopMargin()*1/(1-yUp))
-    p2.SetTopMargin(   0.0075)
-    p2.SetBottomMargin( c.GetBottomMargin()*1/yUp)
-    p1.SetLeftMargin( c.GetLeftMargin() )
-    p2.SetLeftMargin( c.GetLeftMargin() )
+    if has_sf:
+        p1 = rt.TPad( 'up', 'up', 0, yUp, 1,   1, 0,0,0)
+        p2 = rt.TPad( 'do', 'do', 0,   0, 1, yUp, 0,0,0)
+        p1.SetBottomMargin(0.0075)
+        p1.SetTopMargin(   c.GetTopMargin()*1/(1-yUp))
+        p2.SetTopMargin(   0.0075)
+        p2.SetBottomMargin( c.GetBottomMargin()*1/yUp)
+        p1.SetLeftMargin( c.GetLeftMargin() )
+        p2.SetLeftMargin( c.GetLeftMargin() )
+    else:
+        p1 = rt.TPad( 'up', 'up', 0, 0, 1,   1, 0,0,0)
+        p1.SetBottomMargin(c.GetBottomMargin()+0.05)
+        p1.SetTopMargin(c.GetTopMargin())
+        p1.SetLeftMargin(c.GetLeftMargin()+0.02)
+        p2 = None
 
     # if 'et' in plot_var.lower() or 'pt' in plot_var.lower():
     #     p1.SetLogx(); p2.SetLogx()
 
-    leg = rt.TLegend(0.5,0.80,0.95 ,0.92)
+    n_entries = len(data_graphs)
+    n_cols = 1
+    if n_entries > 15:
+        n_cols = 3
+    elif n_entries > 10:
+        n_cols = 2
+
+    leg = rt.TLegend(0.3,0.80,0.95 ,0.92)
     leg.SetFillStyle(0)
     leg.SetBorderSize(0)
+    leg.SetNColumns(n_cols)
+    leg.SetTextSize(0.015 if n_cols >= 2 else 0.02)
 
     # Determine plot ranges
-    effi_min, effi_max = find_min_max_y(list(data_graphs.values()) + list(mc_graphs.values()), force_min=effiMin, force_max=effiMax)
-    sf_min, sf_max = find_min_max_y(list(sf_graphs.values()), force_min=sfMin, force_max=sfMax)
+    if eff_range:
+        effi_min, effi_max = eff_range
+    else:
+        effi_min, effi_max = find_min_max_y(list(data_graphs.values()) + list(mc_graphs.values()), force_min=effiMin, force_max=effiMax)
+    
+    if has_sf:
+        if sf_range:
+            sf_min, sf_max = sf_range
+        else:
+            sf_min, sf_max = find_min_max_y(list(sf_graphs.values()), force_min=sfMin, force_max=sfMax)
 
     # Style and add to legend
     for i, key in enumerate(sorted(data_graphs.keys())):
         color = graphColors[i % len(graphColors)]
         
         data_graphs[key].SetMarkerColor(color); data_graphs[key].SetLineColor(color); data_graphs[key].SetLineWidth(2)
-        sf_graphs[key].SetMarkerColor(color); sf_graphs[key].SetLineColor(color); sf_graphs[key].SetLineWidth(2)
+        if key in sf_graphs:
+            sf_graphs[key].SetMarkerColor(color); sf_graphs[key].SetLineColor(color); sf_graphs[key].SetLineWidth(2)
         if key in mc_graphs:
             mc_graphs[key].SetLineColor(color); mc_graphs[key].SetLineStyle(rt.kDashed); mc_graphs[key].SetLineWidth(2); mc_graphs[key].SetMarkerSize(0)
         
         leg.AddEntry(data_graphs[key], key, "PL")
+    
+    better_1D_legend(leg)
 
     # Draw Efficiency Panel
     p1.cd()
@@ -131,6 +202,11 @@ def EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout, plot_var, slice_vars
     h_dummy.GetXaxis().SetTitle(get_axis_title(plot_var))
     h_dummy.Draw()  # draw axes first
 
+    lineAtOne = rt.TLine(xmin,1,xmax,1)
+    lineAtOne.SetLineStyle(rt.kDashed)
+    lineAtOne.SetLineWidth(2)
+    lineAtOne.Draw()
+
     # now draw all graphs on top
     first_drawn = False
     for key in sorted(data_graphs.keys()):
@@ -144,25 +220,32 @@ def EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout, plot_var, slice_vars
             mc_graphs[key].Draw("L same")
 
     # Draw Scale Factor Panel
-    p2.cd()
+    if has_sf:
+        p2.cd()
 
-    nbins_dummy_sf = max(1, int(min(100, max(1, round((xmax - xmin) / (0.1 if xmax>xmin else 1.0))))))
-    h_dummy_sf = rt.TH1F(f"h_dummy_sf_{plot_var}", "", nbins_dummy_sf, xmin, xmax)
-    h_dummy_sf.SetMinimum(sf_min)
-    h_dummy_sf.SetMaximum(sf_max)
-    h_dummy_sf.GetYaxis().SetTitle("Data / MC")
-    h_dummy_sf.GetXaxis().SetTitle(get_axis_title(plot_var))
-    h_dummy_sf.GetYaxis().SetTitleOffset(1.0)
-    h_dummy_sf.GetXaxis().SetTitleOffset(1.0)
-    h_dummy_sf.Draw()
+        nbins_dummy_sf = max(1, int(min(100, max(1, round((xmax - xmin) / (0.1 if xmax>xmin else 1.0))))))
+        h_dummy_sf = rt.TH1F(f"h_dummy_sf_{plot_var}", "", nbins_dummy_sf, xmin, xmax)
+        h_dummy_sf.SetMinimum(sf_min)
+        h_dummy_sf.SetMaximum(sf_max)
+        h_dummy_sf.GetYaxis().SetTitle("Data / MC")
+        h_dummy_sf.GetXaxis().SetTitle(get_axis_title(plot_var))
+        h_dummy_sf.GetYaxis().SetTitleOffset(1.0)
+        h_dummy_sf.GetXaxis().SetTitleOffset(1.0)
+        h_dummy_sf.Draw()
 
-    first_drawn = False
-    for key in sorted(sf_graphs.keys()):
-        gr = sf_graphs[key]
-        gr.Draw("P same")
-    # ...existing code...
+        first_drawn = False
+        for key in sorted(sf_graphs.keys()):
+            gr = sf_graphs[key]
+            gr.Draw("P same")
 
-    c.cd(); p1.Draw(); p2.Draw(); leg.Draw()
+        lineAtOne = rt.TLine(xmin,1,xmax,1)
+        lineAtOne.SetLineStyle(rt.kDashed)
+        lineAtOne.SetLineWidth(2)
+        lineAtOne.Draw()
+
+    c.cd(); p1.Draw(); 
+    if has_sf: p2.Draw(); 
+    leg.Draw()
     CMS_lumi.CMS_lumi(c, 5, 10)
     
     # Save plots
@@ -385,14 +468,35 @@ def doEGM_SFs(filein, lumi, plot_vars_1d=None, plot_vars_2d=None, slices=None):
 
     # --- File Parsing & Default Configuration ---
     var_names = []
-    with open(filein, 'r') as f:
-        for line in f:
-            if line.strip().startswith("### var"):
-                try: var_names.append(line.split(":")[1].strip())
-                except IndexError: print(f"Warning: Could not parse: {line.strip()}")
+    is_json = filein.endswith('.json')
+    json_data = None
+
+    if is_json:
+        import json
+        try:
+            with open(filein, 'r') as f:
+                # first replace replace('ph_', 'el_').replace('Pho_', 'Ele_')
+                tmp_content = f.read().replace('ph_', 'el_').replace('Pho_', 'Ele_')
+                json_data = json.loads(tmp_content)
+            if not json_data:
+                print("Error: JSON file is empty."); sys.exit(1)
+            # Infer variables from the first bin
+            first_bin = next(iter(json_data.values()))
+            if 'def' in first_bin:
+                var_names = list(first_bin['def'].keys())
+            else:
+                print("Error: JSON format incorrect (missing 'def' in entries)."); sys.exit(1)
+        except Exception as e:
+            print(f"Error reading JSON file: {e}"); sys.exit(1)
+    else:
+        with open(filein, 'r') as f:
+            for line in f:
+                if line.strip().startswith("### var"):
+                    try: var_names.append(line.split(":")[1].strip())
+                    except IndexError: print(f"Warning: Could not parse: {line.strip()}")
     
     if not var_names:
-        print("Error: No variable definitions ('### varX : name') found in file header."); sys.exit(1)
+        print("Error: No variable definitions found in file."); sys.exit(1)
     print(f"Found variables: {var_names}")
 
     # Set defaults if arguments are not provided
@@ -411,23 +515,60 @@ def doEGM_SFs(filein, lumi, plot_vars_1d=None, plot_vars_2d=None, slices=None):
     num_vars = len(var_names)
     eff_list = efficiencyList(var_names)
 
-    def bin_valid_translation(low, high):
+    def bin_range_translation(low, high, var_name=None):
+        import fnmatch
         # convert 9999 and 999999 to reasonable values
-        if high > 999:
-            high = 2*low 
+        _translation_dict = {
+            '*_et': {'global_min': 20.0, 'global_max': 130.0},
+            '*_pt': {'global_min': 20.0, 'global_max': 130.0},
+            # '*_r9': {'global_min': 0.75, 'global_max': 1.1},
+        }
+        
+        if var_name is not None and var_name != '':
+            for pattern, limits in _translation_dict.items():
+                if fnmatch.fnmatch(var_name, pattern):
+                    high = min(high, limits['global_max'])
+                    low = max(low, limits['global_min'])
+                    return (low, high)
+        
+        if high > 998:
+            high = 2 * low
+        
         return (low, high)
 
-    with open(filein, 'r') as f:
-        for line in f:
-            if line.strip().startswith('#') or not line.strip(): continue
-            parts = line.strip().split()
-            if len(parts) < 2 * num_vars + 8 or not all(isFloat(p) for p in parts[:2*num_vars+8]):
-                print(f"Warning: Skipping malformed line: {line.strip()}"); continue
-            
-            numbers = [float(p) for p in parts]
-            bins = tuple(bin_valid_translation(numbers[2*i], numbers[2*i+1]) for i in range(num_vars))
-            vals = numbers[2*num_vars:]
-            eff_list.addEfficiency(efficiency(bins, *vals[:8]))
+    if is_json:
+        for bin_key, bin_data in json_data.items():
+            # Apply bin translation logic to JSON data for consistency
+            if 'def' in bin_data:
+                for v in var_names:
+                    if v in bin_data['def']:
+                        low = float(bin_data['def'][v]['min'])
+                        high = float(bin_data['def'][v]['max'])
+                        new_low, new_high = bin_range_translation(low, high, v)
+                        bin_data['def'][v]['min'] = new_low
+                        bin_data['def'][v]['max'] = new_high
+            bins = []
+            for v in var_names:
+                if 'def' in bin_data and v in bin_data['def']:
+                    bins.append((float(bin_data['def'][v]['min']), float(bin_data['def'][v]['max'])))
+                else:
+                    bins.append((-999.0, -999.0))
+            effi_info = bin_data.get('info', {})
+            eff_list.addEfficiency(efficiencyJson(tuple(bins), effi_info))
+        print(f"Successfully loaded {len(eff_list.effs)} efficiency points from JSON.")
+
+    else:
+        with open(filein, 'r') as f:
+            for line in f:
+                if line.strip().startswith('#') or not line.strip(): continue
+                parts = line.strip().split()
+                if len(parts) < 2 * num_vars + 8 or not all(isFloat(p) for p in parts[:2*num_vars+8]):
+                    print(f"Warning: Skipping malformed line: {line.strip()}"); continue
+                
+                numbers = [float(p) for p in parts]
+                bins = tuple(bin_range_translation(numbers[2*i], numbers[2*i+1], var_names[i]) for i in range(num_vars))
+                vals = numbers[2*num_vars:]
+                eff_list.addEfficiency(efficiency(bins, *vals[:8]))
 
     print(f"Successfully loaded {len(eff_list.effs)} efficiency points.")
     nameout_base = os.path.splitext(filein)[0]
@@ -435,9 +576,17 @@ def doEGM_SFs(filein, lumi, plot_vars_1d=None, plot_vars_2d=None, slices=None):
     cDummy = rt.TCanvas(); cDummy.Print(pdfout + "[")
 
     EEEB_bin_name = {
+        # 'abs(el_sc_eta)' : {
+        #     (0.0, 1.444) : "EB",
+        #     (1.566, 2.5)   : "EE"
+        # }
         'abs(el_sc_eta)' : {
-            (0.0, 1.444) : "EB",
-            (1.566, 2.5)   : "EE"
+            (0.0, 1.5) : "EB",
+            (1.5, 3.0)   : "EE"
+        },
+        'abs_el_sc_eta' : {
+            (0.0, 1.5) : "EB",
+            (1.5, 3.0)   : "EE"
         }
     }
 
@@ -446,7 +595,6 @@ def doEGM_SFs(filein, lumi, plot_vars_1d=None, plot_vars_2d=None, slices=None):
         for plot_var in plot_vars_1d:
             print(f"\n--- Generating 1D plots for '{plot_var}' ---")
             data_points = eff_list.get_1d_projection(plot_var, slices, do_sf=False, do_mc=False, bin_name_dict=EEEB_bin_name)
-            print(data_points)
             mc_points = eff_list.get_1d_projection(plot_var, slices, do_sf=False, do_mc=True, bin_name_dict=EEEB_bin_name)
             sf_points = eff_list.get_1d_projection(plot_var, slices, do_sf=True, do_mc=False, bin_name_dict=EEEB_bin_name)
             
@@ -456,11 +604,64 @@ def doEGM_SFs(filein, lumi, plot_vars_1d=None, plot_vars_2d=None, slices=None):
             data_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in data_points.items()}
             mc_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in mc_points.items()}
             sf_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in sf_points.items()}
+
+            if plot_var == 'el_et':
+                to_remove_key = ['EE;0.50<el_r9<0.56', 'EE;0.56<el_r9<0.85']
+                for rk in to_remove_key:
+                    if rk in data_graphs:
+                        print(f"Removing problematic key '{rk}' from graphs.")
+                        del data_graphs[rk]
+                    if rk in mc_graphs:
+                        del mc_graphs[rk]
+                    if rk in sf_graphs:
+                        del sf_graphs[rk]
+                print(data_graphs)
+            print(data_graphs)
             
+            mc_graphs = {}
+            sf_graphs = {}
+            
+            # Standard plot
             EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout_base, plot_var, slices)
+            if plot_var == 'el_r9':
+                for key in data_graphs:
+                    dummy_data = { key: data_graphs[key] }
+                    if '1.44' in key:
+                        _x_low = 0.45
+                    else:
+                        _x_low = 0.75
+                    EffiGraph1D(dummy_data, {}, {}, nameout_base + f"_single_{key.replace(' ','_').replace(';','_')}", plot_var, slices)
+
+            # Zoomed plot
+            # EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout_base + "_zoom", plot_var, slices, eff_range=(0.5, 1.2), sf_range=(0.9, 1.1))
+            # break
+    
+    do_1D_sum = True
+    if do_1D_sum:
+        for plot_var in plot_vars_1d:
+            print(f"\n--- Generating summed 1D plots for '{plot_var}' ---")
+            data_points = eff_list.get_1d_summation(plot_var, {}, do_sf=False, do_mc=False, bin_name_dict=EEEB_bin_name)
+            mc_points = eff_list.get_1d_summation(plot_var, {}, do_sf=False, do_mc=True, bin_name_dict=EEEB_bin_name)
+            sf_points = eff_list.get_1d_summation(plot_var, {}, do_sf=True, do_mc=False, bin_name_dict=EEEB_bin_name)
+            
+            if not data_points:
+                print(f"Warning: No data found for '{plot_var}' with current slices. Skipping."); continue
+
+            data_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in data_points.items()}
+            mc_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in mc_points.items()}
+            sf_graphs = {k: makeTGraphFromList(v, 'min', 'max') for k, v in sf_points.items()}
+
+            mc_graphs = {}
+            sf_graphs = {}
+            
+            # Standard plot
+            EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout_base + "_sum", plot_var, {})
+            # Zoomed plot
+            EffiGraph1D(data_graphs, mc_graphs, sf_graphs, nameout_base + "_sum_zoom", plot_var, {}, eff_range=(0.5, 1.2), sf_range=(0.9, 1.1))
             # break
 
     # --- 2D Plotting ---
+    exit()
     if len(plot_vars_2d) == 2:
         x_2d, y_2d = plot_vars_2d
         print(f"\n--- Generating 2D plots for '{y_2d}' vs '{x_2d}' ---")
@@ -511,7 +712,7 @@ if __name__ == "__main__":
             slices[var] = (float(min_val), float(max_val))
 
     # Default plot variables if not specified
-    plot_vars_1d = args.plot_var_1d if args.plot_var_1d else ['el_et', 'abs(el_sc_eta)']
-    plot_vars_2d = args.plot_var_2d if args.plot_var_2d else ['el_et', 'abs(el_sc_eta)']
+    plot_vars_1d = None#args.plot_var_1d if args.plot_var_1d else ['el_et', 'abs(el_sc_eta)']
+    plot_vars_2d = None#args.plot_var_2d if args.plot_var_2d else ['el_et', 'abs(el_sc_eta)']
 
     doEGM_SFs(args.txtFile, args.lumi, plot_vars_1d, plot_vars_2d, slices)

@@ -441,18 +441,18 @@ def update_root_params_with_fit(root_param_list, fit_result, is_pass=True, bound
 # ==========================================
 
 def extract_fit_range_from_bin(bin_name, tag_cut=35, fit_low_default=60, fit_low_max=80):
-    if 'el_et_' in bin_name:
-        pattern = r'el_et_(\d+p\d+)To(\d+p\d+)'
-    elif 'el_pt_' in bin_name:
-        pattern = r'el_pt_(\d+p\d+)To(\d+p\d+)'
+    if 'et_' in bin_name:
+        pattern = r'et_(\d+p\d+)To(\d+p\d+)'
+    elif 'pt_' in bin_name:
+        pattern = r'pt_(\d+p\d+)To(\d+p\d+)'
     else:
         print(f"unable to extract et range from bin name: {bin_name}")
-        return None
+        return fit_low_default
     match = re.search(pattern, bin_name)
     
     if not match:
         print(f"unable to extract et range from bin name: {bin_name}")
-        return None
+        return fit_low_default
     
     probe_min_str = match.group(1).replace('p', '.')
     
@@ -460,7 +460,7 @@ def extract_fit_range_from_bin(bin_name, tag_cut=35, fit_low_default=60, fit_low
         probe_min = float(probe_min_str)
     except ValueError:
         print(f"unable to convert probe min '{probe_min_str}' to float")
-        return None
+        return fit_low_default
     
     fit_low = max(fit_low_default, tag_cut + probe_min)
     fit_low = min(fit_low, fit_low_max)

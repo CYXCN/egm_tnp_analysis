@@ -29,14 +29,15 @@ public:
   tnpFitter(TFile *file, std::string histname, double xMcMin = 60.0);
   tnpFitter(TH1 *hPass, TH1 *hFail, std::string histname, double xMcMin = 60.0);
   ~tnpFitter(void) {if( _work != 0 ) delete _work; }
-  void setZLineShapes(TH1 *hZPass, TH1 *hZFail );
-  void setWorkspace(std::vector<std::string>, bool isaddGaus=false, bool useBreitWigner=true);
+  void setZLineShapes(TH1 *hZPass, TH1 *hZFail, bool zeroLowerThreshold=false, double threshold=60.0);
+  void setWorkspace(std::vector<std::string>, bool isaddGaus=false, bool useBreitWigner=false);
   void setOutputFile(TFile *fOut ) {_fOut = fOut;}
   void fits(bool mcTruth,bool isMC,std::string title = "", bool isaddGaus=false);
   void useMinos(bool minos = true) {_useMinos = minos;}
   void textParForCanvas(RooFitResult *resP, RooFitResult *resF, TPad *p);
   
   void fixSigmaFtoSigmaP(bool fix=true) { _fixSigmaFtoSigmaP= fix;}
+  void fixBkgPassToFail(bool fix=true) { _fixBkgPassToFail = fix; }  // new method
 
   void setFitRange(double xMin,double xMax) { _xFitMin = xMin; _xFitMax = xMax; }
   void setMCFitLow(double xMcMin) { _xMcMin = xMcMin; }
@@ -47,6 +48,7 @@ private:
   double _nTotP, _nTotF;
   bool _useMinos;
   bool _fixSigmaFtoSigmaP;
+  bool _fixBkgPassToFail = false;  // new member variable
   double _xFitMin,_xFitMax;
   double _xMcMin = 60;
   int _nBins = 10000;
@@ -129,7 +131,10 @@ void tnpFitter::zeroBinsOutsideRange(TH1* hPass, TH1* hFail, double low, double 
 }
 
 
-void tnpFitter::setZLineShapes(TH1 *hZPass, TH1 *hZFail ) {
+void tnpFitter::setZLineShapes(TH1 *hZPass, TH1 *hZFail, bool zeroLowerThreshold, double threshold) {
+  if (zeroLowerThreshold) {
+    zeroBinsOutsideRange(hZPass, hZFail, threshold, 120.0);
+  }
   RooDataHist rooPass("hGenZPass","hGenZPass",*_work->var("x"),hZPass);
   RooDataHist rooFail("hGenZFail","hGenZFail",*_work->var("x"),hZFail);
   _work->import(rooPass) ;
@@ -196,6 +201,12 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
   RooDataHist *dataPassFull = (RooDataHist*)_work->data("hPass");
   RooDataHist *dataFailFull = (RooDataHist*)_work->data("hFail");
 
+  bool do_bkgPrefit = true;
+
+  // fix peak as this parameter is the same as bkg number
+  if( _work->var("peakP")  ) _work->var("peakP")->setConstant();
+  if( _work->var("peakF")  ) _work->var("peakF")->setConstant();
+
   if( mcTruth ) {
     cout << "--- Performing MC truth fit (no background) ... ---" << endl;
     _work->var("nBkgP")->setVal(0); _work->var("nBkgP")->setConstant();
@@ -209,8 +220,6 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
       _work->var("sosF")->setRange(0,0.001);
       _work->var("sosF")->setVal(0);
       _work->var("sosF")->setConstant(); }
-    if( _work->var("peakP")  ) _work->var("peakP")->setConstant();
-    if( _work->var("peakF")  ) _work->var("peakF")->setConstant();
     if( _work->var("acmsP")  ) _work->var("acmsP")->setConstant();
     if( _work->var("acmsF")  ) _work->var("acmsF")->setConstant();
     if( _work->var("betaP")  ) _work->var("betaP")->setConstant();
@@ -218,39 +227,43 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
     if( _work->var("gammaP") ) _work->var("gammaP")->setConstant();
     if( _work->var("gammaF") ) _work->var("gammaF")->setConstant();
   } else {
-
-    // bkg prefit only in sidebands
-    double nEventsPassLow = dataPassFull->sumEntries("1", "lowSide");
-    double nEventsFailLow = dataFailFull->sumEntries("1", "highSide");
-
-    double nEventsPassHigh = dataPassFull->sumEntries("1", "highSide");
-    double nEventsFailHigh = dataFailFull->sumEntries("1", "highSide");
-
-    int thresholdEvents = 10; // minimum number of events required in each sideband for fitting
-    bool doPassFit = nEventsPassLow > thresholdEvents && nEventsPassHigh > thresholdEvents;
-    bool doFailFit = nEventsFailLow > thresholdEvents && nEventsFailHigh > thresholdEvents;
-    cout << "--- Performing background-only fit on sidebands (50-60, 120-130)... ---" << endl;
     
-    if( !doPassFit ) {
-      cout << "!!! Not enough events in passing sidebands for background fit. Skipping background fit for passing category. !!!" << endl;
+    if ( do_bkgPrefit ) {
+      cout << "--- Resetting background yields for background pre-fit... ---" << endl;
+
+      // bkg prefit only in sidebands
+      double nEventsPassLow = dataPassFull->sumEntries("1", "lowSide");
+      double nEventsFailLow = dataFailFull->sumEntries("1", "highSide");
+
+      double nEventsPassHigh = dataPassFull->sumEntries("1", "highSide");
+      double nEventsFailHigh = dataFailFull->sumEntries("1", "highSide");
+
+      int thresholdEvents = 10; // minimum number of events required in each sideband for fitting
+      bool doPassFit = nEventsPassLow > thresholdEvents && nEventsPassHigh > thresholdEvents;
+      bool doFailFit = nEventsFailLow > thresholdEvents && nEventsFailHigh > thresholdEvents;
+      cout << "--- Performing background-only fit on sidebands (50-60, 120-130)... ---" << endl;
+      
+      if( !doPassFit ) {
+        cout << "!!! Not enough events in passing sidebands for background fit. Skipping background fit for passing category. !!!" << endl;
+      }
+      else {
+        bkgPass->fitTo(*dataPassFull, Minimizer("Minuit2", "MIGRAD"), Strategy(2), SumW2Error(isMC), Range("lowSide,highSide"), PrintLevel(1));
+        cout << "Fitted background parameters (passing):" << endl;
+        RooArgSet *bkgPassParams = bkgPass->getParameters(*x);
+        bkgPassParams->Print("v");
+      }
+      if( !doFailFit ) {
+        cout << "!!! Not enough events in failing sidebands for background fit. Skipping background fit for failing category. !!!" << endl;
+      }
+      else {
+        bkgFail->fitTo(*dataFailFull, Minimizer("Minuit2", "MIGRAD"), Strategy(2), SumW2Error(isMC), Range("lowSide,highSide"), PrintLevel(1));
+        cout << "Fitted background parameters (failing):" << endl;
+        RooArgSet *bkgFailParams = bkgFail->getParameters(*x);
+        bkgFailParams->Print("v");
+      }
+      
+      cout << "--- Background-only fit finished. ---" << endl;
     }
-    else {
-      bkgPass->fitTo(*dataPassFull, Minimizer("Minuit2", "MIGRAD"), Strategy(2), SumW2Error(isMC), Range("lowSide,highSide"), PrintLevel(1));
-      cout << "Fitted background parameters (passing):" << endl;
-      RooArgSet *bkgPassParams = bkgPass->getParameters(*x);
-      bkgPassParams->Print("v");
-    }
-    if( !doFailFit ) {
-      cout << "!!! Not enough events in failing sidebands for background fit. Skipping background fit for failing category. !!!" << endl;
-    }
-    else {
-      bkgFail->fitTo(*dataFailFull, Minimizer("Minuit2", "MIGRAD"), Strategy(2), SumW2Error(isMC), Range("lowSide,highSide"), PrintLevel(1));
-      cout << "Fitted background parameters (failing):" << endl;
-      RooArgSet *bkgFailParams = bkgFail->getParameters(*x);
-      bkgFailParams->Print("v");
-    }
-    
-    cout << "--- Background-only fit finished. ---" << endl;
   }
 
   // --- using dataset for full range fit---
@@ -381,19 +394,79 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
     _work->var("sigmaF")->setConstant();
   }
 
+  // first perform a simple fit without Minos to get close to minimum
+  bool do_simpleFit = true;
+  
+  // Helper lambda to copy background parameters from Fail to Pass
+  auto copyBkgParamsFailToPass = [&]() {
+    // List of background parameter pairs (Fail -> Pass)
+    std::vector<std::pair<std::string, std::string>> bkgParamPairs = {
+      {"acmsF", "acmsP"},
+      {"betaF", "betaP"},
+      {"gammaF", "gammaP"},
+      {"peakF", "peakP"},
+    };
+    
+    for (const auto& pair : bkgParamPairs) {
+      RooRealVar* varF = _work->var(pair.first.c_str());
+      RooRealVar* varP = _work->var(pair.second.c_str());
+      if (varF && varP) {
+        double valF = varF->getVal();
+        varP->setVal(valF);
+        cout << "  Set " << pair.second << " = " << valF << " (from " << pair.first << ")" << endl;
+        if (_fixBkgPassToFail) {
+          varP->setConstant(kTRUE);
+          cout << "  Fixed " << pair.second << " to Fail value" << endl;
+        }
+      }
+    }
+  };
+
+  // --- Fit Fail first, then Pass ---
+  cout << "--- Fitting Fail category first... ---" << endl;
+  
+  if( do_simpleFit ) {
+    cout << "--- Performing simple fit (no Minos) to stabilize parameters... ---" << endl;
+    if( isMC ) {
+      pdfFail->fitTo(*dataFailFitMC, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("full"));
+    } else {
+      pdfFail->fitTo(*dataFailFit, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("full"));
+    }
+  }
+
   if( isMC ) {
-      resPass = pdfPass->fitTo(*dataPassFitMC, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("full"));
       resFail = pdfFail->fitTo(*dataFailFitMC, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("full"));
   } else {
-      resPass = pdfPass->fitTo(*dataPassFit, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kFALSE), Save(), Range("full"));
-      resFail = pdfFail->fitTo(*dataFailFit, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kFALSE), Save(), Range("full"));
+      resFail = pdfFail->fitTo(*dataFailFit, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("full"));
+  }
+  
+  cout << "Global fit results (failing):" << endl;
+  resFail->Print("v");
+
+  // Copy background parameters from Fail to Pass (set initial values or fix)
+  cout << "--- Copying background parameters from Fail to Pass... ---" << endl;
+  copyBkgParamsFailToPass();
+
+  // --- Now fit Pass category ---
+  cout << "--- Fitting Pass category... ---" << endl;
+  
+  if( do_simpleFit ) {
+    if( isMC ) {
+      pdfPass->fitTo(*dataPassFitMC, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("full"));
+    } else {
+      pdfPass->fitTo(*dataPassFit, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("full"));
+    }
+  }
+
+  if( isMC ) {
+      resPass = pdfPass->fitTo(*dataPassFitMC, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("full"));
+  } else {
+      resPass = pdfPass->fitTo(*dataPassFit, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("full"));
   }
 
   // print fit results
   cout << "Global fit results (passing):" << endl;
   resPass->Print("v");
-  cout << "Global fit results (failing):" << endl;
-  resFail->Print("v");
   cout << "--- Global fit finished. ---" << endl;
 
   // reset range for plotting

@@ -101,7 +101,7 @@ def computeEffi( n1,n2,e1,e2, eps = 1e-6 ):
 
 
 import os.path
-def getAllEffi( info, bindef ):
+def old_getAllEffi( info, bindef ):
     effis = {}
     if not info['mcNominal'] is None and os.path.isfile(info['mcNominal']):
         rootfile = rt.TFile( info['mcNominal'], 'read' )
@@ -109,8 +109,8 @@ def getAllEffi( info, bindef ):
         hF = rootfile.Get('%s_Fail'%bindef['name'])
         #bin1 = 1
         #bin2 = hP.GetXaxis().GetNbins()
-        bin1 = 11
-        bin2 = 70
+        bin1 = 11 # 60GeV
+        bin2 = 70 # 120GeV
         eP = -1.
         eF = -1.
         nP = hP.IntegralAndError(bin1,bin2,ctypes.c_double(eP))
@@ -228,4 +228,92 @@ def getAllEffi( info, bindef ):
         effis['dataAltBkg'] = computeEffi(nP,nF,eP,eF)
     else:
         effis['dataAltBkg'] = [-1,-1]
+    return effis
+
+def _get_counts_mc(filename, bin_name):
+    if filename is None or not os.path.isfile(filename):
+        return None
+    
+    rootfile = rt.TFile(filename, 'read')
+    hP = rootfile.Get('%s_Pass' % bin_name)
+    hF = rootfile.Get('%s_Fail' % bin_name)
+    
+    if not hP or not hF:
+        rootfile.Close()
+        return None
+
+    # Hardcoded bins from original code
+    bin1 = 11
+    bin2 = 70
+    eP = ctypes.c_double(-1.0)
+    eF = ctypes.c_double(-1.0)
+    
+    nP = hP.IntegralAndError(bin1, bin2, eP)
+    nF = hF.IntegralAndError(bin1, bin2, eF)
+    
+    rootfile.Close()
+    return nP, nF, eP.value, eF.value
+
+def _get_counts_data(filename, bin_name):
+    if filename is None or not os.path.isfile(filename):
+        return None
+
+    rootfile = rt.TFile(filename, 'read')
+    from ROOT import RooFit, RooFitResult
+    
+    fitresP = rootfile.Get('%s_resP' % bin_name)
+    fitresF = rootfile.Get('%s_resF' % bin_name)
+
+    if not fitresP or not fitresF:
+        rootfile.Close()
+        return None
+
+    nP = fitresP.floatParsFinal().find('nSigP').getVal()
+    nF = fitresF.floatParsFinal().find('nSigF').getVal()
+    eP = fitresP.floatParsFinal().find('nSigP').getError()
+    eF = fitresF.floatParsFinal().find('nSigF').getError()
+    
+    rootfile.Close()
+    return nP, nF, eP, eF
+
+def getAllEffi( info, bindef, out_level='txt' ):
+    effis = {}
+    
+    # Define processing rules: key -> (is_data, file_key)
+    tasks = {
+        'mcNominal':   (False, 'mcNominal'),
+        'tagSel':      (False, 'tagSel'),
+        'mcAlt':       (False, 'mcAlt'),
+        'dataNominal': (True,  'dataNominal'),
+        'dataAltSig':  (True,  'dataAltSig'),
+        'dataAltBkg':  (True,  'dataAltBkg')
+    }
+
+    for key, (is_data, file_key) in tasks.items():
+        filename = info[file_key]
+        counts = None
+        
+        if is_data:
+            counts = _get_counts_data(filename, bindef['name'])
+        else:
+            counts = _get_counts_mc(filename, bindef['name'])
+            
+        if counts:
+            nP, nF, eP, eF = counts
+            eff_res = computeEffi(nP, nF, eP, eF)
+            
+            if out_level == 'json':
+                effis[key] = {
+                    'eff': eff_res[0],
+                    'error': eff_res[1],
+                    'nSigP': nP, 'nSigF': nF,
+                    'errP': eP,  'errF': eF
+                }
+            else:
+                effis[key] = eff_res
+        else:
+            if out_level == 'json':
+                effis[key] = {'eff': -1, 'error': -1, 'nSigP': 0, 'nSigF': 0, 'errP': 0, 'errF': 0}
+            else:
+                effis[key] = [-1, -1]
     return effis
