@@ -54,7 +54,7 @@ def is_number(s):
 def get_json_path(year, obj_type="Ele"):
     import os
     REPO_DICT = {
-        "2025": "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15",
+        "2025": "Run3-25Prompt-Summer24-NanoAODv15",
         "2024": "Run3-24CDEReprocessingFGHIPrompt-Summer24-NanoAODv15",
         "2023": "Run3-23CSep23-Summer23-NanoAODv12",
         "2023BPIX": "Run3-23DSep23-Summer23BPix-NanoAODv12",
@@ -165,7 +165,7 @@ def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, era=
     # Build base selection string
     base_selection = bindef.get('baseSelection', '')
     if sample.mcTruth:
-        base_selection = f'{base_selection} && mcTrue !=1' if base_selection else 'mcTrue==1'
+        base_selection = f'{base_selection} && mcTrue ==1' if base_selection else 'mcTrue==1'
     if sample.cut is not None:
         base_selection = f'{base_selection} && {sample.cut}' if base_selection else sample.cut
     
@@ -207,9 +207,10 @@ def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, era=
 
     # Configure Corrections
     if do_correction:
-        current_year = "2024" 
-        if hasattr(sample, 'year'):
+        current_year = era if era is not None else "2024"
+        if hasattr(sample, 'year') and sample.year is not None:
             current_year = sample.year
+        print(f"actual used year for correction is {current_year}")
         json_path_py = get_json_path(current_year, "Ele")
         manager.configureCorrections(json_path_py.encode('utf-8'))
 

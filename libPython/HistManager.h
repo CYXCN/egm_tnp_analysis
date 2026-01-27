@@ -209,7 +209,6 @@ public:
 
             if (fDoCorrection && fCorrector) {
                 unsigned int current_run = run;
-                if (current_run > 390000) current_run = 386946; // 2025 mapping
 
                 // Probe Correction
                 double corr_factor_probe = fCorrector->get_correction(
