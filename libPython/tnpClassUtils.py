@@ -19,6 +19,7 @@ class tnpSample:
         self.weight  = None
         self.tnpTree = None
         self.maxWeight = 999999
+        self.year     = "2024"
 
     def set_weight(self,weight):
         self.weight = weight
@@ -65,6 +66,12 @@ class tnpSample:
         if self.nEvts >= 0 :
             self.nEvts = self.nEvts + sample.nEvts
         self.path.extend( sample.path )
+    
+    def set_year(self, year):
+        self.year = year
+
+    def add_path(self, path):
+        self.path.append(path)
 
 
 
