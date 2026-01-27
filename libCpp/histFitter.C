@@ -36,6 +36,7 @@ public:
   void textParForCanvas(RooFitResult *resP, RooFitResult *resF, TPad *p);
   
   void fixSigmaFtoSigmaP(bool fix=true) { _fixSigmaFtoSigmaP= fix;}
+  void fixBkgPassToFail(bool fix=true) { _fixBkgPassToFail = fix; }  // new method
 
   void setFitRange(double xMin,double xMax) { _xFitMin = xMin; _xFitMax = xMax; }
 private:
@@ -45,6 +46,7 @@ private:
   double _nTotP, _nTotF;
   bool _useMinos;
   bool _fixSigmaFtoSigmaP;
+  bool _fixBkgPassToFail = false;  // new member variable
   double _xFitMin,_xFitMax;
   int _nBins = 10000;
   void initFromHistograms(TH1* hPassOrig, TH1* hFailOrig, const std::string& histname);
@@ -82,15 +84,15 @@ void tnpFitter::initFromHistograms(TH1* hPassOrig, TH1* hFailOrig, const std::st
     _work->factory("x[50,130]");
 
     // Full-range datasets
-    RooDataHist rooPass("hPass", "hPass", *_work->var("x"), hPass);
-    RooDataHist rooFail("hFail", "hFail", *_work->var("x"), hFail);
+    RooDataHist rooPass("hPassFull", "hPassFull", *_work->var("x"), hPass);
+    RooDataHist rooFail("hFailFull", "hFailFull", *_work->var("x"), hFail);
     _work->import(rooPass);
     _work->import(rooFail);
 
     // Fit dataset: [60, 120]
     zeroBinsOutsideRange(hPass, hFail, 60.0, 120.0);
-    RooDataHist rooPassFit("hPassFit", "hPassFit", *_work->var("x"), hPass);
-    RooDataHist rooFailFit("hFailFit", "hFailFit", *_work->var("x"), hFail);
+    RooDataHist rooPassFit("hPass", "hPass", *_work->var("x"), hPass);
+    RooDataHist rooFailFit("hFail", "hFail", *_work->var("x"), hFail);
     _work->import(rooPassFit);
     _work->import(rooFailFit);
 
@@ -147,11 +149,19 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
 
   cout << " title : " << title << endl;
 
-  
+  RooRealVar *x = _work->var("x");
+  x->setRange("fitMassRange",_xFitMin,_xFitMax);
   RooAbsPdf *pdfPass = _work->pdf("pdfPass");
   RooAbsPdf *pdfFail = _work->pdf("pdfFail");
+  RooAbsPdf *bkgPass = _work->pdf("bkgPass");
+  RooAbsPdf *bkgFail = _work->pdf("bkgFail");
   RooFitResult* resPass;  
   RooFitResult* resFail;
+
+  RooDataHist *dataPassFull = (RooDataHist*)_work->data("hPassFull");
+  RooDataHist *dataFailFull = (RooDataHist*)_work->data("hFailFull");
+  RooDataHist *dataPass = (RooDataHist*)_work->data("hPass");
+  RooDataHist *dataFail = (RooDataHist*)_work->data("hFail");
 
   if( mcTruth ) {
     _work->var("nBkgP")->setVal(0); _work->var("nBkgP")->setConstant();
@@ -168,23 +178,83 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
     if( _work->var("gammaF") ) _work->var("gammaF")->setConstant();
   }
 
-  /// FC: seems to be better to change the actual range than using a fitRange in the fit itself (???)
-  /// FC: I don't know why but the integral is done over the full range in the fit not on the reduced range
-  _work->var("x")->setRange(_xFitMin,_xFitMax);
-  _work->var("x")->setRange("fitMassRange",_xFitMin,_xFitMax);
-  if( isMC == 1 ) resPass = pdfPass->fitTo(*_work->data("hPass"), Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE),Save(),Range("fitMassRange"));
-  else resPass = pdfPass->fitTo(*_work->data("hPass"), Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kFALSE),Save(),Range("fitMassRange"));
-  //RooFitResult* resPass = pdfPass->fitTo(*_work->data("hPass"),Minos(_useMinos),SumW2Error(kTRUE),Save());
-  if( _fixSigmaFtoSigmaP ) {
-    _work->var("sigmaF")->setVal( _work->var("sigmaP")->getVal() );
-    _work->var("sigmaF")->setConstant();
+    // first perform a simple fit without Minos to get close to minimum
+  bool doPreFit = true;
+  
+  // Helper lambda to copy background parameters from Fail to Pass
+  auto copyBkgParamsFailToPass = [&]() {
+    // List of background parameter pairs (Fail -> Pass)
+    std::vector<std::pair<std::string, std::string>> bkgParamPairs = {
+      {"acmsF", "acmsP"},
+      {"betaF", "betaP"},
+      {"gammaF", "gammaP"},
+      {"peakF", "peakP"},
+    };
+    for (const auto& pair : bkgParamPairs) {
+      RooRealVar* varF = _work->var(pair.first.c_str());
+      RooRealVar* varP = _work->var(pair.second.c_str());
+      if (varF && varP) {
+        double valF = varF->getVal();
+        varP->setVal(valF);
+        cout << "  Set " << pair.second << " = " << valF << " (from " << pair.first << ")" << endl;
+        if (_fixBkgPassToFail) {
+          varP->setConstant(kTRUE);
+          cout << "  Fixed " << pair.second << " to Fail value" << endl;
+        }
+      }
+    }
+  };
+
+  // --- Fit Fail first, then Pass ---
+  cout << "--- Fitting Fail category first... ---" << endl;
+  
+  if( doPreFit ) {
+    cout << "--- Performing pre fit (no Minos) to stabilize parameters... ---" << endl;
+    if( isMC ) {
+      pdfFail->fitTo(*dataFail, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("fitMassRange"));
+    } else {
+      pdfFail->fitTo(*dataFail, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("fitMassRange"));
+    }
   }
 
-  _work->var("sigmaF")->setVal(_work->var("sigmaP")->getVal());
-  _work->var("sigmaF")->setRange(0.8* _work->var("sigmaP")->getVal(), 3.0* _work->var("sigmaP")->getVal());
-  if( isMC == 1 ) resFail = pdfFail->fitTo(*_work->data("hFail"), Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE),Save(),Range("fitMassRange"));
-  else resFail = pdfFail->fitTo(*_work->data("hFail"), Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kFALSE),Save(),Range("fitMassRange"));
-  //RooFitResult* resFail = pdfFail->fitTo(*_work->data("hFail"),Minos(_useMinos),SumW2Error(kTRUE),Save());
+  if( isMC ) {
+      resFail = pdfFail->fitTo(*dataFail, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("fitMassRange"));
+  } else {
+      resFail = pdfFail->fitTo(*dataFail, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("fitMassRange"));
+  }
+  
+  cout << "Global fit results (failing):" << endl;
+  resFail->Print("v");
+
+  // Copy background parameters from Fail to Pass (set initial values or fix)
+  cout << "--- Copying background parameters from Fail to Pass... ---" << endl;
+  copyBkgParamsFailToPass();
+
+  // --- Now fit Pass category ---
+  cout << "--- Fitting Pass category... ---" << endl;
+  
+  if( doPreFit ) {
+    if( isMC ) {
+      pdfPass->fitTo(*dataPass, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("fitMassRange"));
+    } else {
+      pdfPass->fitTo(*dataPass, Minimizer("Minuit2", "MIGRAD"), Minos(kFALSE), Strategy(0), SumW2Error(kTRUE), Range("fitMassRange"));
+    }
+  }
+
+  if( isMC ) {
+      resPass = pdfPass->fitTo(*dataPass, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("fitMassRange"));
+  } else {
+      resPass = pdfPass->fitTo(*dataPass, Minimizer("Minuit2", "MIGRAD"), Minos(_useMinos), Strategy(2), SumW2Error(kTRUE), Save(), Range("fitMassRange"));
+  }
+
+  // print fit results
+  cout << "Global fit results (passing):" << endl;
+  resPass->Print("v");
+  cout << "--- Global fit finished. ---" << endl;
+
+  // reset range for plotting
+  _work->var("x")->setRange(_xFitMin,_xFitMax);
+
 
   RooPlot *pPass = _work->var("x")->frame(60,120);
   RooPlot *pFail = _work->var("x")->frame(60,120);
