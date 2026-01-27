@@ -12,6 +12,7 @@
 
 /// include pdfs
 #include "RooCBExGaussShape.h"
+#include "RooTwoSigmaDSCBShape.h"
 #include "RooCMSShape.h"
 
 #include <vector>

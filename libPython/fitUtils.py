@@ -2,6 +2,7 @@ import ROOT as rt
 rt.gROOT.LoadMacro('./libCpp/histFitter.C+')
 rt.gROOT.LoadMacro('./libCpp/RooCBExGaussShape.cc+')
 rt.gROOT.LoadMacro('./libCpp/RooCMSShape.cc+')
+rt.gROOT.LoadMacro('./libCpp/RooTwoSigmaDSCBShape.cc+')
 rt.gROOT.SetBatch(1)
 
 from ROOT import tnpFitter
@@ -12,6 +13,7 @@ import math
 
 minPtForSwitch = 70
 
+# assist function
 def ptMin( tnpBin ):
     ptmin = 1
     if tnpBin['name'].find('pt_') >= 0:
@@ -19,13 +21,26 @@ def ptMin( tnpBin ):
     elif tnpBin['name'].find('et_') >= 0:
         ptmin = float(tnpBin['name'].split('et_')[1].split('p')[0])
     return ptmin
+def estimatedMassCut(tnpBin, TagPtOffset=35):
+    # due to the pT cut on tag and the probe, there will be a lower cut on the mass
+    # we need to zero the line shape histogram below that mass to avoid fit bias
+    # when using Zee gen level line shape
+    ptmin = ptMin(tnpBin)
+    estimatedMass = ptmin + TagPtOffset
+    if estimatedMass < 60:
+        estimatedMass = 60
+    if estimatedMass > 80:
+        estimatedMass = 80
+    return estimatedMass
 
-def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
+
+def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam, tailLeft=0, useDSCB=False ):
 
     ### tricky: use n < 0 for high pT bin (so need to remove param and add it back)
     cbNList = ['tailLeft']
-    ptmin = ptMin(tnpBin)        
-    if ptmin >= 35 :
+    ptmin = ptMin(tnpBin)       
+    def _setting_tailright():
+        print('--- Using Right tail for fitting ---')
         for par in cbNList:
             for ip in range(len(tnpWorkspaceParam)):
                 x=re.compile('%s.*?' % par)
@@ -34,6 +49,13 @@ def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
                     print('**** remove', ir)
                     tnpWorkspaceParam.remove(ir)                    
             tnpWorkspaceParam.append( 'tailLeft[-1]' )
+    
+    if not useDSCB:
+        if tailLeft==0:
+            if ptmin >= 35 :
+                _setting_tailright()
+        elif tailLeft==-1:
+            _setting_tailright()
 
     if sample.isMC:
         return tnpWorkspaceParam
@@ -47,6 +69,8 @@ def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam ):
     fitresF = filemc.Get( '%s_resF' % tnpBin['name'] )
 
     listOfParam = ['nF','alphaF','nP','alphaP','sigmaP','sigmaF','sigmaP_2','sigmaF_2','meanGF','sigmaGF', 'sigFracF']
+    if useDSCB:
+        listOfParam += ['nF_2','alphaF_2','nP_2','alphaP_2']
     
     fitPar = fitresF.floatParsFinal()
     for ipar in range(len(fitPar)):
@@ -136,17 +160,28 @@ def histFitterNominal( sample, tnpBin, tnpWorkspaceParam ):
 #############################################################
 ########## alternate signal fitter
 #############################################################
-def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0 ):
+def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0, useDSCB=False):
 
-    tnpWorkspacePar = createWorkspaceForAltSig( sample,  tnpBin, tnpWorkspaceParam )
+    tailLeft = 0
 
-    tnpWorkspaceFunc = [
-        "tailLeft[1]",
-        "RooCBExGaussShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),alphaP,nP, expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),tailLeft)",
-        "RooCBExGaussShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),alphaF,nF, expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),tailLeft)",
-        "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
-        "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
+    tnpWorkspacePar = createWorkspaceForAltSig( sample,  tnpBin, tnpWorkspaceParam, tailLeft=tailLeft, useDSCB=useDSCB )
+
+    if useDSCB:
+        print('--- Using Double Crystal Ball + Exponential for fitting ---')
+        tnpWorkspaceFunc = [
+            "RooTwoSigmaDSCBShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),alphaP,nP,alphaP_2,nP_2)",
+            "RooTwoSigmaDSCBShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),alphaF,nF,alphaF_2,nF_2)",
+            "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
+            "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
         ]
+    else:
+        tnpWorkspaceFunc = [
+            "tailLeft[1]",
+            "RooCBExGaussShape::sigResPass(x,meanP,expr('sqrt(sigmaP*sigmaP+sosP*sosP)',{sigmaP,sosP}),alphaP,nP, expr('sqrt(sigmaP_2*sigmaP_2+sosP*sosP)',{sigmaP_2,sosP}),tailLeft)",
+            "RooCBExGaussShape::sigResFail(x,meanF,expr('sqrt(sigmaF*sigmaF+sosF*sosF)',{sigmaF,sosF}),alphaF,nF, expr('sqrt(sigmaF_2*sigmaF_2+sosF*sosF)',{sigmaF_2,sosF}),tailLeft)",
+            "RooCMSShape::bkgPass(x, acmsP, betaP, gammaP, peakP)",
+            "RooCMSShape::bkgFail(x, acmsF, betaF, gammaF, peakF)",
+            ]
     if isaddGaus==1:
         tnpWorkspaceFunc += [ "Gaussian::sigGaussFail(x,meanGF,sigmaGF)", ]
         if sample.isMC:

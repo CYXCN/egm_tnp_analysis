@@ -232,17 +232,55 @@ if  args.doFit:
     print(" ======== Fitting ========")
     sampleToFit.dump()
     def parallel_fit(ib):
-        if (args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0:
-            if args.altSig and not args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit )
-            elif args.altSig and args.addGaus:
-                tnpRoot.histFitterAltSig(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltSigFit_addGaus, 1)
-            elif args.altBkg:
-                tnpRoot.histFitterAltBkg(  sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParAltBkgFit )
+        # delete the previous fit file if exists
+        file_name = sampleToFit.nominalFit
+        if args.altSig:
+            file_name = sampleToFit.altSigFit
+        if args.altBkg:
+            file_name = sampleToFit.altBkgFit
+        files = glob.glob( file_name.replace('.root', f"-*{tnpBins['bins'][ib]['name']}.root") )
+        print(f'[WARNING] removing previous fit files for bin {ib}: {files}')
+        os.system(f'rm -f {files}')
+
+        is_looser = len(selected_bins) < max_bin_number
+        if is_looser: print(f'using looser fit for bin {ib}')
+        
+        curr_bin = tnpBins['bins'][ib]
+        fit_func = None
+        fit_args = [sampleToFit, curr_bin]
+        fit_kwargs = {}
+
+        # determine fit function and parameters
+        if args.altSig:
+            fit_func = tnpRoot.histFitterAltSig
+            use_dscb = hasattr(tnpConf, 'AltSigFitUsingDSCB') and tnpConf.tnpParAltSigFit_DSCB
+            fit_kwargs['useDSCB'] = use_dscb
+            if use_dscb:
+                params = "tnpParAltSigFit_DSCB"
+            else: 
+                params = "tnpParAltSigFit"
+        elif args.altBkg:
+            fit_func = tnpRoot.histFitterAltBkg
+            params = "tnpParAltBkgFit"
+        else:
+            fit_func = tnpRoot.histFitterNominal
+            params = "tnpParNomFit"
+        
+        if is_looser:
+            if getattr(tnpConf, params + "Looser", None) is None:
+                print(f'[tnpEGM_fitter] looser fit parameters not defined for {params} in settings, using normal fit parameters')
             else:
-                tnpRoot.histFitterNominal( sampleToFit, tnpBins['bins'][ib], tnpConf.tnpParNomFit )
-    pool = Pool()
-    pool.map(parallel_fit, range(len(tnpBins['bins'])))
+                params = params + "Looser"
+        
+        if args.altSig and args.addGaus:
+            params += "_addGaus"
+            fit_kwargs['isaddGaus'] = True
+        
+        fit_args.append( getattr(tnpConf, params) )
+
+        # perform fit
+        if fit_func:
+            fit_func(*fit_args, **fit_kwargs)
 
     # adding timeout reporting
     timeout_seconds = 10000 if len(selected_bins) < max_bin_number else 2000
