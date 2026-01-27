@@ -27,6 +27,7 @@ parser.add_argument('--flag'       , default = None       , help ='WP to test')
 parser.add_argument('settings'     , default = None       , help = 'setting file [mandatory]')
 parser.add_argument('--doCor'      , dest = 'doCorrection', action='store_true'  , help = 'do scale and smearing correction')
 parser.add_argument('--year'       , default = '2024', help = 'year config used for correction' )
+parser.add_argument('--useGenZee'  , action='store_true'  , help = 'use ZeeGenLevel for Z line shape in nominal fit')
 
 
 args = parser.parse_args()
@@ -265,6 +266,7 @@ if  args.doFit:
         else:
             fit_func = tnpRoot.histFitterNominal
             params = "tnpParNomFit"
+            fit_kwargs['useGenZee'] = args.useGenZee
         
         if is_looser:
             if getattr(tnpConf, params + "Looser", None) is None:

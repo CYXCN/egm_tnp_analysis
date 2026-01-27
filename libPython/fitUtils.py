@@ -21,6 +21,102 @@ def ptMin( tnpBin ):
     elif tnpBin['name'].find('et_') >= 0:
         ptmin = float(tnpBin['name'].split('et_')[1].split('p')[0])
     return ptmin
+def getHistEntries(histFile, binName, category):
+    """
+    Get the number of entries in a histogram
+    
+    Args:
+        histFile: Path to ROOT file
+        binName: Name of the bin
+        category: 'Pass' or 'Fail'
+    
+    Returns:
+        Number of entries in the histogram, 0 if error
+    """
+    try:
+        infile = rt.TFile(histFile, "read")
+        hist = infile.Get(f'{binName}_{category}')
+        entries = hist.GetEntries() if hist else 0
+        infile.Close()
+        return entries
+    except:
+        return 0
+def selectZLineShape(sample, tnpBin, minEntries=500, useGenZee=False):
+    """
+    Intelligently select Z line shape based on histogram entries and pT threshold
+    
+    Priority logic:
+    1. If both Pass and Fail entries < minEntries: Use ZeeGenLevel (most critical)
+    2. If Pass entries < minEntries: Use ZeeGenLevel (Pass is essential)
+    3. If Fail entries < minEntries AND pT > minPtForSwitch: Use Pass for Fail (high pT + low Fail stats)
+    4. If Fail entries < minEntries: Use Pass for Fail (only Fail has low stats)
+    5. If pT > minPtForSwitch: Use Pass for Fail (high pT fallback, but both have enough stats)
+    6. Otherwise: Use respective histograms normally
+    
+    Args:
+        sample: Sample object containing MC reference
+        tnpBin: TnP bin configuration
+        minEntries: Minimum entries threshold (default: 500)
+    
+    Returns:
+        tuple: (histZLineShapeP, histZLineShapeF, fileHandle)
+    """
+    binName = tnpBin['name']
+    ptmin = ptMin(tnpBin)
+    
+    # Get entries for Pass and Fail categories
+    entriesP = getHistEntries(sample.mcRef.histFile, binName, 'Pass')
+    entriesF = getHistEntries(sample.mcRef.histFile, binName, 'Fail')
+    
+    print(f'--- Z LineShape Selection ---')
+    print(f'Bin: {binName}, pT_min: {ptmin} GeV')
+    print(f'Pass entries: {entriesP}, Fail entries: {entriesF}, Threshold: {minEntries}')
+
+    if useGenZee:
+        print('Using ZeeGenLevel as per configuration')
+        fileGenLevel = rt.TFile('etc/inputs/ZeeGenLevel.root', 'read')
+        histZLineShape = fileGenLevel.Get('Mass')
+        return histZLineShape, histZLineShape, fileGenLevel
+    
+    fileTruth = rt.TFile(sample.mcRef.histFile, 'read')
+    
+    # Priority 1: Both Pass and Fail have insufficient statistics -> Use ZeeGenLevel
+    if entriesP < minEntries and entriesF < minEntries:
+        print('Both Pass and Fail entries below threshold, switching to ZeeGenLevel')
+        fileTruth.Close()
+        fileGenLevel = rt.TFile('etc/inputs/ZeeGenLevel.root', 'read')
+        histZLineShape = fileGenLevel.Get('Mass')
+        return histZLineShape, histZLineShape, fileGenLevel
+    
+    # Priority 2: Pass has insufficient statistics -> Use ZeeGenLevel
+    # (Pass is critical, cannot use Fail for Pass)
+    elif entriesP < minEntries:
+        print('Pass entries below threshold, switching to ZeeGenLevel')
+        fileTruth.Close()
+        fileGenLevel = rt.TFile('etc/inputs/ZeeGenLevel.root', 'read')
+        histZLineShape = fileGenLevel.Get('Mass')
+        return histZLineShape, histZLineShape, fileGenLevel
+    
+    # At this point, Pass has sufficient statistics
+    histZLineShapeP = fileTruth.Get(f'{binName}_Pass')
+    
+    # Priority 3: Fail has insufficient statistics -> Use Pass for Fail
+    if entriesF < minEntries:
+        print('Fail entries below threshold, using Pass histogram for Fail')
+        histZLineShapeF = fileTruth.Get(f'{binName}_Pass')
+        return histZLineShapeP, histZLineShapeF, fileTruth
+    
+    # Priority 4: High pT bin (both have sufficient statistics) -> Use Pass for Fail
+    elif ptmin > minPtForSwitch:
+        print(f'High pT bin (pT > {minPtForSwitch} GeV) with sufficient statistics, using Pass histogram for Fail')
+        histZLineShapeF = fileTruth.Get(f'{binName}_Pass')
+        return histZLineShapeP, histZLineShapeF, fileTruth
+    
+    # Priority 5: Normal case -> Use respective histograms
+    else:
+        print('Using normal Pass and Fail histograms')
+        histZLineShapeF = fileTruth.Get(f'{binName}_Fail')
+        return histZLineShapeP, histZLineShapeF, fileTruth
 def estimatedMassCut(tnpBin, TagPtOffset=35):
     # due to the pT cut on tag and the probe, there will be a lower cut on the mass
     # we need to zero the line shape histogram below that mass to avoid fit bias
@@ -105,7 +201,7 @@ def createWorkspaceForAltSig( sample, tnpBin, tnpWorkspaceParam, tailLeft=0, use
 #############################################################
 ########## nominal fitter
 #############################################################
-def histFitterNominal( sample, tnpBin, tnpWorkspaceParam ):
+def histFitterNominal( sample, tnpBin, tnpWorkspaceParam, minEntries=500, useGenZee=False ):
         
     tnpWorkspaceFunc = [
         "Gaussian::sigResPass(x,meanP,sigmaP)",
@@ -132,15 +228,18 @@ def histFitterNominal( sample, tnpBin, tnpWorkspaceParam ):
     fitter.setOutputFile( rootfile )
     
     ## generated Z LineShape
-    ## for high pT change the failing spectra to any probe to get statistics
-    fileTruth  = rt.TFile(sample.mcRef.histFile,'read')
-    histZLineShapeP = fileTruth.Get('%s_Pass'%tnpBin['name'])
-    histZLineShapeF = fileTruth.Get('%s_Fail'%tnpBin['name'])
-    if ptMin( tnpBin ) > minPtForSwitch: 
-        histZLineShapeF = fileTruth.Get('%s_Pass'%tnpBin['name'])
-#        fitter.fixSigmaFtoSigmaP()
-    fitter.setZLineShapes(histZLineShapeP,histZLineShapeF)
+    ## Apply intelligent switching only for data (nominal fit only applies to data)
+    histZLineShapeP, histZLineShapeF, fileTruth = selectZLineShape(sample, tnpBin, minEntries, useGenZee=useGenZee)
+    estimatedMassCutValue = estimatedMassCut(tnpBin)
+    fitter.setZLineShapes(histZLineShapeP, histZLineShapeF, True, estimatedMassCutValue)
+    # check the fail numbers to decide whether to fix the bkgPassToFail ratio
+    failEntries = getHistEntries(sample.histFile, tnpBin['name'], 'Fail')
 
+    not_fixBkgPassToFail = True
+
+    if failEntries > minEntries and not not_fixBkgPassToFail:
+        print(f'---- Fixing bkg parameters to Fail for Pass fitting in Bin {tnpBin["name"]} ----')
+        fitter.fixBkgPassToFail()
     fileTruth.Close()
 
     ### set workspace
@@ -211,7 +310,8 @@ def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0, useDSCB=Fa
     ## generated Z LineShape
     fileTruth = rt.TFile('etc/inputs/ZeeGenLevel.root','read')
     histZLineShape = fileTruth.Get('Mass')
-    fitter.setZLineShapes(histZLineShape,histZLineShape)
+    estimatedMassCutValue = estimatedMassCut(tnpBin)
+    fitter.setZLineShapes(histZLineShape,histZLineShape, True, estimatedMassCutValue)
     fileTruth.Close()
 
     ### set workspace
@@ -232,7 +332,7 @@ def histFitterAltSig( sample, tnpBin, tnpWorkspaceParam, isaddGaus=0, useDSCB=Fa
 #############################################################
 ########## alternate background fitter
 #############################################################
-def histFitterAltBkg( sample, tnpBin, tnpWorkspaceParam ):
+def histFitterAltBkg( sample, tnpBin, tnpWorkspaceParam, minEntries=500 ):
 
     tnpWorkspaceFunc = [
         "Gaussian::sigResPass(x,meanP,sigmaP)",
@@ -259,15 +359,21 @@ def histFitterAltBkg( sample, tnpBin, tnpWorkspaceParam ):
 #    fitter.setFitRange(65,115)
 
     ## generated Z LineShape
-    ## for high pT change the failing spectra to any probe to get statistics
-    fileTruth = rt.TFile(sample.mcRef.histFile,'read')
-    histZLineShapeP = fileTruth.Get('%s_Pass'%tnpBin['name'])
-    histZLineShapeF = fileTruth.Get('%s_Fail'%tnpBin['name'])
-    if ptMin( tnpBin ) > minPtForSwitch: 
-        histZLineShapeF = fileTruth.Get('%s_Pass'%tnpBin['name'])
-#        fitter.fixSigmaFtoSigmaP()
-    fitter.setZLineShapes(histZLineShapeP,histZLineShapeF)
-    fileTruth.Close()
+    ## Apply intelligent switching only for data (altBkg fit only applies to data)
+    if not sample.isMC:
+        histZLineShapeP, histZLineShapeF, fileTruth = selectZLineShape(sample, tnpBin, minEntries)
+        estimatedMassCutValue = estimatedMassCut(tnpBin)
+        fitter.setZLineShapes(histZLineShapeP, histZLineShapeF, True, estimatedMassCutValue)
+        fileTruth.Close()
+    else:
+        # For MC, use standard approach
+        fileTruth = rt.TFile(sample.mcRef.histFile,'read')
+        histZLineShapeP = fileTruth.Get('%s_Pass'%tnpBin['name'])
+        histZLineShapeF = fileTruth.Get('%s_Fail'%tnpBin['name'])
+        if ptMin( tnpBin ) > minPtForSwitch: 
+            histZLineShapeF = fileTruth.Get('%s_Pass'%tnpBin['name'])
+        fitter.setZLineShapes(histZLineShapeP, histZLineShapeF)
+        fileTruth.Close()
 
     ### set workspace
     workspace = rt.vector("string")()

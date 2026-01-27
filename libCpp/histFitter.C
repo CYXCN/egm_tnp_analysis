@@ -29,8 +29,8 @@ public:
   tnpFitter( TFile *file, std::string histname  );
   tnpFitter( TH1 *hPass, TH1 *hFail, std::string histname  );
   ~tnpFitter(void) {if( _work != 0 ) delete _work; }
-  void setZLineShapes(TH1 *hZPass, TH1 *hZFail );
-  void setWorkspace(std::vector<std::string>, bool isaddGaus=false);
+  void setZLineShapes(TH1 *hZPass, TH1 *hZFail, bool zeroLowerThreshold=false, double threshold=60.0);
+  void setWorkspace(std::vector<std::string>, bool isaddGaus=false, bool useBreitWigner=false);
   void setOutputFile(TFile *fOut ) {_fOut = fOut;}
   void fits(bool mcTruth,bool isMC,std::string title = "", bool isaddGaus=false);
   void useMinos(bool minos = true) {_useMinos = minos;}
@@ -114,27 +114,43 @@ void tnpFitter::zeroBinsOutsideRange(TH1* hPass, TH1* hFail, double low, double 
 }
 
 
-void tnpFitter::setZLineShapes(TH1 *hZPass, TH1 *hZFail ) {
+void tnpFitter::setZLineShapes(TH1 *hZPass, TH1 *hZFail, bool zeroLowerThreshold, double threshold) {
+  if (zeroLowerThreshold) {
+    zeroBinsOutsideRange(hZPass, hZFail, threshold, 120.0);
+  }
   RooDataHist rooPass("hGenZPass","hGenZPass",*_work->var("x"),hZPass);
   RooDataHist rooFail("hGenZFail","hGenZFail",*_work->var("x"),hZFail);
   _work->import(rooPass) ;
   _work->import(rooFail) ;  
 }
 
-void tnpFitter::setWorkspace(std::vector<std::string> workspace, bool isaddGaus) {
+void tnpFitter::setWorkspace(std::vector<std::string> workspace, bool isaddGaus, bool useBreitWigner) {
   for( unsigned icom = 0 ; icom < workspace.size(); ++icom ) {
     _work->factory(workspace[icom].c_str());
   }
 
   _work->var("x")->setBins(_nBins, "cache");
-  _work->factory("HistPdf::sigPhysPass(x,hGenZPass,3)");
-  _work->factory("HistPdf::sigPhysFail(x,hGenZFail,3)");
+  if (useBreitWigner) {
+      cout << "Using Breit-Wigner for Z line shape" << endl;
+      _work->factory("mZ[91.1876]");
+      _work->factory("widthZ[2.4952]");
+      _work->var("mZ")->setConstant(kTRUE);
+      _work->var("widthZ")->setConstant(kTRUE);
+
+      // using Breit-Wigner
+      _work->factory("BreitWigner::sigPhysPass(x, mZ, widthZ)");
+      _work->factory("BreitWigner::sigPhysFail(x, mZ, widthZ)");
+  } 
+  else {
+      _work->factory("HistPdf::sigPhysPass(x,hGenZPass,3)");
+      _work->factory("HistPdf::sigPhysFail(x,hGenZFail,3)");
+  }
   _work->factory("FCONV::sigPass(x, sigPhysPass , sigResPass)");
   _work->factory("FCONV::sigFail(x, sigPhysFail , sigResFail)");
-  _work->factory(TString::Format("nSigP[%f,0.5,%f]",_nTotP*0.9,_nTotP*1.5));
-  _work->factory(TString::Format("nBkgP[%f,0.5,%f]",_nTotP*0.1,_nTotP*1.5));
-  _work->factory(TString::Format("nSigF[%f,0.5,%f]",_nTotF*0.9,_nTotF*1.5));
-  _work->factory(TString::Format("nBkgF[%f,0.5,%f]",_nTotF*0.1,_nTotF*1.5));
+  _work->factory(TString::Format("nSigP[%f,1e-10,%f]",_nTotP*0.9,_nTotP*1.5)); // the default effi will be 1e-4
+  _work->factory(TString::Format("nBkgP[%f,1e-6,%f]",_nTotP*0.1,_nTotP*1.5));
+  _work->factory(TString::Format("nSigF[%f,1e-6,%f]",_nTotF*0.9,_nTotF*1.5));
+  _work->factory(TString::Format("nBkgF[%f,1e-6,%f]",_nTotF*0.1,_nTotF*1.5));
   _work->factory("SUM::pdfPass(nSigP*sigPass,nBkgP*bkgPass)");
   
   if (isaddGaus) {
@@ -167,9 +183,14 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
   if( mcTruth ) {
     _work->var("nBkgP")->setVal(0); _work->var("nBkgP")->setConstant();
     _work->var("nBkgF")->setVal(0); _work->var("nBkgF")->setConstant();
-    if( _work->var("sosP")   ) { _work->var("sosP")->setVal(0);
+    if( _work->var("sosP")   ) { 
+      // the minimum value in config is 0.5, so it can not be setted to 0 directly
+      _work->var("sosP")->setRange(0,0.001);
+      _work->var("sosP")->setVal(0);
       _work->var("sosP")->setConstant(); }
-    if( _work->var("sosF")   ) { _work->var("sosF")->setVal(0);
+    if( _work->var("sosF")   ) { 
+      _work->var("sosF")->setRange(0,0.001);
+      _work->var("sosF")->setVal(0);
       _work->var("sosF")->setConstant(); }
     if( _work->var("acmsP")  ) _work->var("acmsP")->setConstant();
     if( _work->var("acmsF")  ) _work->var("acmsF")->setConstant();
