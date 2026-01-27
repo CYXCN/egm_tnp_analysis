@@ -69,9 +69,9 @@ print(outputDirectory)
 ####################################################################
 if args.checkBins:
     if getattr(tnpConf, 'cor_cutBase', None) is None:
-        tnpBiner = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+        tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
     else:
-        tnpBiner = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
+        tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
     tnpBiner.tuneCuts( tnpBins, tnpConf.additionalCuts )
     for ib in range(len(tnpBins['bins'])):
         print(tnpBins['bins'][ib]['name'])
@@ -109,7 +109,7 @@ for s in tnpConf.samplesDef.keys():
 if args.createHists:
 
     print(" ======== Creating Histograms (Final Precise Configuration) ========")
-    import libPython.histUtils as tnpHist
+    import libPython.new_histUtils as tnpHist
     import copy
 
     import libPython.assistFunc as tnpAssist
@@ -293,7 +293,7 @@ if  args.doFit:
         if ib in selected_bins:
             tasks_to_run.append(ib)
     import time
-    max_procs = mp.cpu_count()
+    max_procs = min(mp.cpu_count(), 8)
     running_procs = [] 
     
     task_idx = 0
@@ -428,7 +428,7 @@ if args.sumUp:
         # ====================
         for ib in range(len(tnpBins['bins'])):
             print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
-            effis = tnpRoot.old_getAllEffi( info, tnpBins['bins'][ib] )
+            effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib] )
 
             ### formatting for arbitrary N-D binning
             title_parts = tnpBins['bins'][ib]['title'].split(';')

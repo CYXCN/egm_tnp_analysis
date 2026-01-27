@@ -180,6 +180,10 @@ void tnpFitter::fits(bool mcTruth,bool isMC,string title, bool isaddGaus) {
   RooDataHist *dataPass = (RooDataHist*)_work->data("hPass");
   RooDataHist *dataFail = (RooDataHist*)_work->data("hFail");
 
+  // fix peak as this parameter is the same as bkg number
+  if( _work->var("peakP")  ) _work->var("peakP")->setConstant();
+  if( _work->var("peakF")  ) _work->var("peakF")->setConstant();
+
   if( mcTruth ) {
     _work->var("nBkgP")->setVal(0); _work->var("nBkgP")->setConstant();
     _work->var("nBkgF")->setVal(0); _work->var("nBkgF")->setConstant();
