@@ -47,59 +47,67 @@ private:
   bool _fixSigmaFtoSigmaP;
   double _xFitMin,_xFitMax;
   int _nBins = 10000;
+  void initFromHistograms(TH1* hPassOrig, TH1* hFailOrig, const std::string& histname);
+  void zeroBinsOutsideRange(TH1* hPass, TH1* hFail, double low, double high);
 };
 
-tnpFitter::tnpFitter(TFile *filein, std::string histname   ) : _useMinos(false),_fixSigmaFtoSigmaP(false) {
-  RooMsgService::instance().setGlobalKillBelow(RooFit::WARNING);
-  _histname_base = histname;  
-
-  TH1 *hPass = (TH1*) filein->Get(TString::Format("%s_Pass",histname.c_str()).Data());
-  TH1 *hFail = (TH1*) filein->Get(TString::Format("%s_Fail",histname.c_str()).Data());
-  _nTotP = hPass->Integral();
-  _nTotF = hFail->Integral();
-  /// MC histos are done between 50-130 to do the convolution properly
-  /// but when doing MC fit in 60-120, need to zero bins outside the range
-  for( int ib = 0; ib <= hPass->GetXaxis()->GetNbins()+1; ib++ )
-   if(  hPass->GetXaxis()->GetBinCenter(ib) <= 60 || hPass->GetXaxis()->GetBinCenter(ib) >= 120 ) {
-     hPass->SetBinContent(ib,0);
-     hFail->SetBinContent(ib,0);
-   }
-  
-  _work = new RooWorkspace("w") ;
-  _work->factory("x[50,130]");
-
-  RooDataHist rooPass("hPass","hPass",*_work->var("x"),hPass);
-  RooDataHist rooFail("hFail","hFail",*_work->var("x"),hFail);
-  _work->import(rooPass) ;
-  _work->import(rooFail) ;
-  _xFitMin = 60;
-  _xFitMax = 120;
+tnpFitter::tnpFitter(TFile *filein, std::string histname) {
+    TH1* hPass = static_cast<TH1*>(filein->Get(TString::Format("%s_Pass", histname.c_str()).Data()));
+    TH1* hFail = static_cast<TH1*>(filein->Get(TString::Format("%s_Fail", histname.c_str()).Data()));
+    initFromHistograms(hPass, hFail, histname);
 }
 
-tnpFitter::tnpFitter(TH1 *hPass, TH1 *hFail, std::string histname  ) : _useMinos(false),_fixSigmaFtoSigmaP(false) {
-  RooMsgService::instance().setGlobalKillBelow(RooFit::WARNING);
-  _histname_base = histname;
-  
-  _nTotP = hPass->Integral();
-  _nTotF = hFail->Integral();
-  /// MC histos are done between 50-130 to do the convolution properly
-  /// but when doing MC fit in 60-120, need to zero bins outside the range
-  for( int ib = 0; ib <= hPass->GetXaxis()->GetNbins()+1; ib++ )
-    if(  hPass->GetXaxis()->GetBinCenter(ib) <= 60 || hPass->GetXaxis()->GetBinCenter(ib) >= 120 ) {
-      hPass->SetBinContent(ib,0);
-      hFail->SetBinContent(ib,0);
+// Constructor from TH1* — unchanged signature
+tnpFitter::tnpFitter(TH1 *hPass, TH1 *hFail, std::string histname) {
+    initFromHistograms(hPass, hFail, histname);
+}
+
+// Private common initializer
+void tnpFitter::initFromHistograms(TH1* hPassOrig, TH1* hFailOrig, const std::string& histname) {
+    RooMsgService::instance().setGlobalKillBelow(RooFit::ERROR);
+    _histname_base = histname;
+    _xFitMin = 60.0;
+    _xFitMax = 120.0;
+    _useMinos = false;
+    _fixSigmaFtoSigmaP = false;
+
+    // Clone to avoid modifying input histograms
+    TH1* hPass = static_cast<TH1*>(hPassOrig->Clone());
+    TH1* hFail = static_cast<TH1*>(hFailOrig->Clone());
+
+    _nTotP = hPass->Integral();
+    _nTotF = hFail->Integral();
+
+    _work = new RooWorkspace("w");
+    _work->factory("x[50,130]");
+
+    // Full-range datasets
+    RooDataHist rooPass("hPass", "hPass", *_work->var("x"), hPass);
+    RooDataHist rooFail("hFail", "hFail", *_work->var("x"), hFail);
+    _work->import(rooPass);
+    _work->import(rooFail);
+
+    // Fit dataset: [60, 120]
+    zeroBinsOutsideRange(hPass, hFail, 60.0, 120.0);
+    RooDataHist rooPassFit("hPassFit", "hPassFit", *_work->var("x"), hPass);
+    RooDataHist rooFailFit("hFailFit", "hFailFit", *_work->var("x"), hFail);
+    _work->import(rooPassFit);
+    _work->import(rooFailFit);
+
+    delete hPass;
+    delete hFail;
+}
+
+// Helper: zero bins outside [low, high]
+void tnpFitter::zeroBinsOutsideRange(TH1* hPass, TH1* hFail, double low, double high) {
+    int nBins = hPass->GetXaxis()->GetNbins();
+    for (int ib = 0; ib <= nBins + 1; ++ib) {
+        double center = hPass->GetXaxis()->GetBinCenter(ib);
+        if (center <= low || center >= high) {
+            hPass->SetBinContent(ib, 0.0);
+            hFail->SetBinContent(ib, 0.0);
+        }
     }
-  
-  _work = new RooWorkspace("w") ;
-  _work->factory("x[50,130]");
-  
-  RooDataHist rooPass("hPass","hPass",*_work->var("x"),hPass);
-  RooDataHist rooFail("hFail","hFail",*_work->var("x"),hFail);
-  _work->import(rooPass) ;
-  _work->import(rooFail) ;
-  _xFitMin = 60;
-  _xFitMax = 120;
-  
 }
 
 
