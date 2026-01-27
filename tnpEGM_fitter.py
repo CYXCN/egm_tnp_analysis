@@ -5,7 +5,9 @@ import os
 import sys
 import pickle
 import shutil
-from multiprocessing import Pool
+import multiprocessing as mp
+import datetime
+import glob
 
 
 parser = argparse.ArgumentParser(description='tnp EGM fitter')
@@ -20,12 +22,17 @@ parser.add_argument('--doFit'      , action='store_true'  , help = 'fit sample (
 parser.add_argument('--mcSig'      , action='store_true'  , help = 'fit MC nom [to init fit parama]')
 parser.add_argument('--doPlot'     , action='store_true'  , help = 'plotting')
 parser.add_argument('--sumUp'      , action='store_true'  , help = 'sum up efficiencies')
-parser.add_argument('--iBin'       , dest = 'binNumber'   , type = int,  default=-1, help='bin number (to refit individual bin)')
+parser.add_argument('--iBin'       , dest = 'binNumber'   , type = str,  default='-1', help='bin number (to refit individual bin), support multiple bins separated by comma, e.g. "0,1,2" or range "0-5"')
 parser.add_argument('--flag'       , default = None       , help ='WP to test')
 parser.add_argument('settings'     , default = None       , help = 'setting file [mandatory]')
 
 
 args = parser.parse_args()
+
+import types
+tnp_config_module = types.ModuleType('__tnp_config__')
+tnp_config_module.used_flag = args.flag
+sys.modules['__tnp_config__'] = tnp_config_module
 
 print('===> settings %s <===' % args.settings)
 importSetting = 'import %s as tnpConf' % args.settings.replace('/','.').split('.py')[0]
@@ -58,7 +65,10 @@ print(outputDirectory)
 ##### Create (check) Bins
 ####################################################################
 if args.checkBins:
-    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    if getattr(tnpConf, 'cor_cutBase', None) is None:
+        tnpBiner = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    else:
+        tnpBiner = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
     tnpBiner.tuneCuts( tnpBins, tnpConf.additionalCuts )
     for ib in range(len(tnpBins['bins'])):
         print(tnpBins['bins'][ib]['name'])
@@ -69,7 +79,10 @@ if args.createBins:
     if os.path.exists( outputDirectory ):
             shutil.rmtree( outputDirectory )
     os.makedirs( outputDirectory )
-    tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    if getattr(tnpConf, 'cor_cutBase', None) is None:
+        tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase)
+    else:
+        tnpBins = tnpBiner.createBins(tnpConf.biningDef,tnpConf.cutBase,tnpConf.cor_cutBase)
     tnpBiner.tuneCuts( tnpBins, tnpConf.additionalCuts )
     pickle.dump( tnpBins, open( '%s/bining.pkl'%(outputDirectory),'wb') )
     print('created dir: %s ' % outputDirectory)
@@ -109,7 +122,7 @@ if args.createHists:
             for k, v in obj.items():
                 if k in ['name', 'title'] and isinstance(v, str):
                     new_dict[k] = v.encode('utf-8')
-                elif k in ['cut'] and isinstance(v, str):
+                elif k in ['cut', 'baseSelection'] and isinstance(v, str):
                     new_dict[k] = v
                 else:
                     new_dict[k] = tnpBins_converter(v)
@@ -135,11 +148,11 @@ if args.createHists:
             if hasattr(sample, 'tree') and isinstance(getattr(sample, 'tree'), str):
                 setattr(sample, 'tree', getattr(sample, 'tree').encode('utf-8'))
             # 2. `tnpBins` must be converted
-            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var )
+    num_samples = len(list(tnpConf.samplesDef.keys()))
+    num_processes = min(num_samples, mp.cpu_count())
     
-    pool = Pool()
-    # pool.map(parallel_hists, tnpConf.samplesDef.keys())
-    for k in tnpConf.samplesDef.keys(): parallel_hists(k)
+    with mp.Pool(processes=num_processes) as pool:
+        pool.map(parallel_hists, tnpConf.samplesDef.keys())
 
     sys.exit(0)
 
@@ -171,6 +184,32 @@ for s in tnpConf.samplesDef.keys():
 if args.mcSig :
     sampleToFit = tnpConf.samplesDef['mcNom']
 
+max_bin_number = len(tnpBins['bins'])
+available_list = range(max_bin_number)
+
+# Parse bin numbers
+def parse_bin_numbers(bin_str, max_bin):
+    """Parse bin number string, support formats like '0,1,2' or '0-5' or '-1' for all bins"""
+    bin_str = bin_str.strip()
+    if bin_str == '-1':
+        return list(range(max_bin))
+    
+    bins = set()
+    for part in bin_str.split(','):
+        part = part.strip()
+        if '-' in part and part != '-1':
+            # Range format: "0-5"
+            start, end = part.split('-')
+            bins.update(range(int(start), int(end) + 1))
+        else:
+            # Single bin
+            bins.add(int(part))
+    
+    # Filter valid bins
+    return sorted([b for b in bins if 0 <= b < max_bin])
+
+selected_bins = parse_bin_numbers(args.binNumber, max_bin_number)
+print(f'Selected bins to process: {selected_bins}')
 if  args.doFit:
     print(" ======== Fitting ========")
     sampleToFit.dump()
@@ -187,6 +226,59 @@ if  args.doFit:
     pool = Pool()
     pool.map(parallel_fit, range(len(tnpBins['bins'])))
 
+    # adding timeout reporting
+    timeout_seconds = 10000 if len(selected_bins) < max_bin_number else 2000
+    timeout_log = os.path.join(outputDirectory, 'timeout.txt')
+    
+    tasks_to_run = []
+    for ib in available_list:
+        if ib in selected_bins:
+            tasks_to_run.append(ib)
+    import time
+    max_procs = mp.cpu_count()
+    running_procs = [] 
+    
+    task_idx = 0
+    total_tasks = len(tasks_to_run)
+
+    while task_idx < total_tasks or len(running_procs) > 0:
+        while len(running_procs) < max_procs and task_idx < total_tasks:
+            ib = tasks_to_run[task_idx]
+            p = mp.Process(target=parallel_fit, args=(ib,))
+            p.start()
+            running_procs.append((p, ib, time.time()))
+            task_idx += 1
+        
+        active_procs = []
+        for p, ib, start_t in running_procs:
+            if not p.is_alive():
+                p.join()
+            
+            elif (time.time() - start_t) > timeout_seconds:
+                try:
+                    print(f"[tnpEGM_fitter] Killing bin {ib} due to timeout ({timeout_seconds}s)")
+                    p.terminate()
+                    p.join(5)
+                except Exception as e:
+                    print(f"Error terminating process: {e}")
+                
+                # timeout record
+                ts = datetime.datetime.now().isoformat()
+                ft_param = 'altSig' if args.altSig else ('altBkg' if args.altBkg else 'nominal')
+                info = f"{ts}\tbin={ib}\tflag={args.flag}\tsample={sampleToFit.name}\ttimeout={timeout_seconds}s\tfitParam={ft_param}\n"
+                with open(timeout_log, 'a') as fout:
+                    fout.write(info)
+            
+            else:
+                active_procs.append((p, ib, start_t))
+        
+        running_procs = active_procs
+        if len(running_procs) > 0:
+            time.sleep(0.1)
+
+    if len(selected_bins) < max_bin_number:
+        print(f'fitting for bins {selected_bins} done')
+        sys.exit(0)
     args.doPlot = True
      
 ####################################################################
@@ -201,16 +293,32 @@ if  args.doPlot:
     if args.altBkg : 
         fileName = sampleToFit.altBkgFit
         fitType  = 'altBkgFit'
+    to_merge_file_list = glob.glob( fileName.replace('.root', '-*.root') )
+    # check file size, if file size < 5KB, consider it as failed fit and remove it from merging
+    valid_file_list = []
+    invalid_bin_list = []
+    for f in to_merge_file_list:
+        if os.path.getsize(f) > 5*1024:
+            valid_file_list.append(f)
+        else:
+            print(f"[tnpEGM_fitter] removing invalid fit file {f} (size < 5KB)")
+            # get bin number from file name
+            # e.g. data_EGamma0_2025_Run2025C_0_unseeded_passingHLTUnseeded.nominalFit-bin349_el_sc_eta_2p00To2p50_el_et_200p00To500p00_el_r9_1p05To2p00
+            bin_str = f.split('.root')[0].split('-bin')[-1].split('_')[0]
+            invalid_bin_list.append(int(bin_str))
         
-    os.system('hadd -f %s %s' % (fileName, fileName.replace('.root', '-*.root')))
+    os.system('hadd -f %s %s' % (fileName, ' '.join(valid_file_list)))
 
     plottingDir = '%s/plots/%s/%s' % (outputDirectory,sampleToFit.name,fitType)
     if not os.path.exists( plottingDir ):
         os.makedirs( plottingDir )
     shutil.copy('etc/inputs/index.php.listPlots','%s/index.php' % plottingDir)
 
-    for ib in range(len(tnpBins['bins'])):
-        if (args.binNumber >= 0 and ib == args.binNumber) or args.binNumber < 0:
+    for ib in range(max_bin_number):#range(len(tnpBins['bins'])):
+        if ib in selected_bins:
+            if ib in invalid_bin_list:
+                print(f"[tnpEGM_fitter] skipping plotting for invalid bin {ib}")
+                continue
             tnpRoot.histPlotter( fileName, tnpBins['bins'][ib], plottingDir )
 
     print(' ===> Plots saved in <=======')
@@ -243,7 +351,7 @@ if args.sumUp:
     fOut = open( effFileName,'w')
     
     for ib in range(len(tnpBins['bins'])):
-        effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib] )
+        effis = tnpRoot.old_getAllEffi( info, tnpBins['bins'][ib] )
 
         ### formatting assuming 2D bining -- to be fixed        
         v1Range = tnpBins['bins'][ib]['title'].split(';')[1].split('<')
