@@ -15,3 +15,5 @@ etc/*.pyc
 etc/config/*.pyc
 
 condor/*
+
+/output*
