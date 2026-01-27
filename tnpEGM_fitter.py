@@ -25,6 +25,8 @@ parser.add_argument('--sumUp'      , action='store_true'  , help = 'sum up effic
 parser.add_argument('--iBin'       , dest = 'binNumber'   , type = str,  default='-1', help='bin number (to refit individual bin), support multiple bins separated by comma, e.g. "0,1,2" or range "0-5"')
 parser.add_argument('--flag'       , default = None       , help ='WP to test')
 parser.add_argument('settings'     , default = None       , help = 'setting file [mandatory]')
+parser.add_argument('--doCor'      , dest = 'doCorrection', action='store_true'  , help = 'do scale and smearing correction')
+parser.add_argument('--year'       , default = '2024', help = 'year config used for correction' )
 
 
 args = parser.parse_args()
@@ -109,6 +111,15 @@ if args.createHists:
     import libPython.histUtils as tnpHist
     import copy
 
+    import libPython.assistFunc as tnpAssist
+    do_correction = args.doCorrection
+    correction_year = getattr(tnpConf, 'correctionYear', '2024')
+    correction_year = args.year if args.year else correction_year
+    obj_type = getattr(tnpConf, 'correctionObjType', 'Ele')
+    correction_json_path = tnpAssist.get_json_path(correction_year, obj_type=obj_type)
+    if do_correction:
+        print(f'apply scale and smearing correction using {correction_year} config with json: {correction_json_path}')
+
     def tnpBins_converter(obj):
         """
         A highly specific converter based on the exact needs of histUtils.pyx.
@@ -133,6 +144,11 @@ if args.createHists:
             return obj.encode('utf-8')
         return obj
 
+    branch_mapping = tnpConf.branch_mapping if hasattr(tnpConf, 'branch_mapping') else None
+    r9Eta_reweighting = tnpConf.r9Eta_reweighting if hasattr(tnpConf, 'r9Eta_reweighting') else None
+    if r9Eta_reweighting:
+        print(f'apply R9-Eta reweighting using {r9Eta_reweighting} file')
+
     tnpBins_to_pass = copy.deepcopy(tnpBins)
     tnpBins_to_pass = tnpBins_converter(tnpBins_to_pass)
     def parallel_hists(sampleType):
@@ -148,6 +164,8 @@ if args.createHists:
             if hasattr(sample, 'tree') and isinstance(getattr(sample, 'tree'), str):
                 setattr(sample, 'tree', getattr(sample, 'tree').encode('utf-8'))
             # 2. `tnpBins` must be converted
+            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_json_path, branch_mapping, r9Eta_reweighting)#, max_event = 10000000)
+    
     num_samples = len(list(tnpConf.samplesDef.keys()))
     num_processes = min(num_samples, mp.cpu_count())
     

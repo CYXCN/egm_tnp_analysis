@@ -14,11 +14,29 @@ else:
     USE_CYTHON = False
 ext = '.pyx' if USE_CYTHON else '.cpp'
 
-sourcefiles  = ["histUtils" + ext]
+# swith to new histUtils, to choice: histUtils or new_histUtils
+histUtils_used = 'new_histUtils'
 
-extensions=[Extension('histUtils',
+sourcefiles  = [histUtils_used + ext]
+
+try:
+    import correctionlib
+    import os
+    # correctionlib
+    CORRECTIONLIB_INCLUDE = os.path.join(os.path.dirname(correctionlib.__file__), "include")
+    CORRECTIONLIB_DIR = os.path.join(os.path.dirname(correctionlib.__file__), "lib")
+    include_dirs = [CORRECTIONLIB_INCLUDE]
+    library_dirs = [CORRECTIONLIB_DIR]
+except ImportError:
+    raise RuntimeError("correctionlib not found. Please install it: pip install correctionlib")
+
+extensions=[Extension(histUtils_used,
             sourcefiles,
             language='c++',
+            include_dirs=include_dirs,
+            libraries=["correctionlib"],
+            library_dirs=library_dirs,
+            runtime_library_dirs=[CORRECTIONLIB_DIR],
             extra_compile_args=sysconfig.get_config_var('CFLAGS').split(),
             extra_link_args= sysconfig.get_config_var('LDFLAGS').split(),
             )]
