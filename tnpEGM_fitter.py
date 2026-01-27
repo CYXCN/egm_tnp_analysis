@@ -405,38 +405,92 @@ if args.sumUp:
         info['tagSel'   ] = tnpConf.samplesDef['tagSel'].histFile
 
     effis = None
-    effFileName ='%s/egammaEffi.txt' % outputDirectory 
-    fOut = open( effFileName,'w')
-    
-    for ib in range(len(tnpBins['bins'])):
-        effis = tnpRoot.old_getAllEffi( info, tnpBins['bins'][ib] )
+    out_format = 'json'
+    if out_format == 'txt':
+        effFileName ='%s/egammaEffi.txt' % outputDirectory 
+        fOut = open( effFileName,'w')
 
-        ### formatting assuming 2D bining -- to be fixed        
-        v1Range = tnpBins['bins'][ib]['title'].split(';')[1].split('<')
-        v2Range = tnpBins['bins'][ib]['title'].split(';')[2].split('<')
-        if ib == 0 :
-            astr = '### var1 : %s' % v1Range[1]
-            print(astr)
-            fOut.write( astr + '\n' )
-            astr = '### var2 : %s' % v2Range[1]
-            print(astr)
-            fOut.write( astr + '\n' )
+        if len(tnpBins['bins']) > 0:
+            n_vars = len(tnpBins['bins'][0]['title'].split(';'))
+            var_headers = []
+            for i in range(1, n_vars + 1):
+                var_headers.extend([f'var{i}_low', f'var{i}_high'])
+            eff_headers = [
+                'dataNom_eff', 'dataNom_err',
+                'mcNom_eff', 'mcNom_err',
+                'dataAltBkg_eff',
+                'dataAltSig_eff',
+                'mcAlt_eff',
+                'tagSel_eff'
+            ]
+            header_line = '\t'.join(var_headers + eff_headers)
+            fOut.write('# ' + header_line + '\n')
+        # ====================
+        for ib in range(len(tnpBins['bins'])):
+            print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
+            effis = tnpRoot.old_getAllEffi( info, tnpBins['bins'][ib] )
+
+            ### formatting for arbitrary N-D binning
+            title_parts = tnpBins['bins'][ib]['title'].split(';')
+            n_vars = len(title_parts)
             
-        astr =  '%+8.5f\t%+8.5f\t%+8.5f\t%+8.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f\t%5.5f' % (
-            float(v1Range[0]), float(v1Range[2]),
-            float(v2Range[0]), float(v2Range[2]),
+            var_ranges = []
+            for i in range(0, n_vars ):
+                var_range = title_parts[i].split('<')
+                if '>' in title_parts[i]:
+                    var_range = title_parts[i].replace('=','').split('>')
+                    var_range = [var_range[1], 'xxx', 9999]
+                var_ranges.append(var_range)
+            
+            if ib == 0:
+                print(tnpBins['bins'][ib]['title'])
+                for i, var_range in enumerate(var_ranges, 1):
+                    astr = '### var%d : %s' % (i, var_range[1])
+                    print(astr)
+                    fOut.write(astr + '\n')
+
+            format_parts = []
+            values = []
+            
+            for var_range in var_ranges:
+                format_parts.extend(['%+8.5f', '%+8.5f'])
+                values.extend([float(var_range[0]), float(var_range[2])])
+            
+            # add efficiency values
+            format_parts.extend(['%5.5f'] * 8)
+            values.extend([
             effis['dataNominal'][0],effis['dataNominal'][1],
             effis['mcNominal'  ][0],effis['mcNominal'  ][1],
             effis['dataAltBkg' ][0],
             effis['dataAltSig' ][0],
             effis['mcAlt' ][0],
             effis['tagSel'][0],
-            )
-        print(astr)
-        fOut.write( astr + '\n' )
-    fOut.close()
+            ])
+            astr = '\t'.join(format_parts) % tuple(values)
+            print(astr)
+            fOut.write(astr + '\n')
 
-    print('Effis saved in file : ',  effFileName)
-    import libPython.EGammaID_scaleFactors as egm_sf
-    egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
-    exit(0)
+        fOut.close()
+
+        print('Effis saved in file : ',  effFileName)
+        import libPython.new_EGammaID_scaleFactors as egm_sf
+        egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
+        exit(0)
+    elif out_format == 'json':
+        effFileName ='%s/egammaEffi.json' % outputDirectory 
+        import json
+        effis_all = {}
+        for ib in range(len(tnpBins['bins'])):
+            print('Summing up bin %d / %d ' % (ib, len(tnpBins['bins']) ) )
+            effis = tnpRoot.getAllEffi( info, tnpBins['bins'][ib], out_level='json' )
+            effis_all[tnpBins['bins'][ib]['name']] = {
+                'tittle'      : tnpBins['bins'][ib]['title'],
+                'def'         : tnpBins['bins'][ib]['vars'],
+                'info' : effis
+            }
+        with open(effFileName, 'w') as fOut:
+            json.dump( effis_all, fOut, indent=4)
+        print('Effis saved in file : ',  effFileName)
+        import libPython.new_EGammaID_scaleFactors as egm_sf
+        egm_sf.doEGM_SFs(effFileName,sampleToFit.lumi)
+        exit(0)
