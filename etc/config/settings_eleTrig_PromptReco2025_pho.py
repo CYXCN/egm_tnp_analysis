@@ -27,7 +27,7 @@ flags = {
     'passingHLTSeeded' : '(passhltEG30LR9Id85b90eHE12R9Id50b80eR9IdLastFilter == 1) || (passhltEG30LIso60CaloId15b35eHE12R9Id50b80eEcalIsoLastFilter == 1)',
     'passingHLTUnseeded' : '(passhltEG22R9Id85b90eHE12R9Id50b80eR9UnseededLastFilter == 1) || (passhltEG22Iso60CaloId15b35eHE12R9Id50b80eTrackIsoUnseededLastFilter == 1)',
     }
-baseOutDir = '/eos/user/y/yucao/program/trigger/CMSSW_11_2_0/src/check_repo/output_photon/2024_final/'
+baseOutDir = '/eos/user/y/yucao/program/trigger/CMSSW_11_2_0/src/check_repo/output_photon/2025_final/'
 
 #############################################################
 ########## samples definition  - preparing the samples
@@ -37,8 +37,8 @@ baseOutDir = '/eos/user/y/yucao/program/trigger/CMSSW_11_2_0/src/check_repo/outp
 import etc.inputs.tnpSampleDef as tnpSamples
 tnpTreeDir = 'tnpEleTrig'
 
-first_data_sample = 'data_EGamma0_2024_Run2024Cv1_0'
-tnpSamples_collection = tnpSamples.Prompt2024_photon
+first_data_sample = 'data_EGamma0_2025_Run2025Cv2_0'
+tnpSamples_collection = tnpSamples.Prompt2025_photon
 samplesDef = {
         'data'  : tnpSamples_collection[first_data_sample].clone(),
         'mcNom' : tnpSamples_collection['DY_madgraph'].clone(), # using DYtoEE, indeed this is 2025 MC
@@ -46,9 +46,9 @@ samplesDef = {
         'mcAlt': None,
     }
 
-samplesDef['data'].rename('data_Prompt2024')
+samplesDef['data'].rename('data_Prompt2025')
 correctionObjType = 'photon'
-correctionYear = '2024'
+correctionYear = '2025'
 ## can add data sample easily
 for sample_name in tnpSamples_collection.keys():
     if not sample_name.startswith('data_'):
@@ -86,7 +86,7 @@ if not samplesDef['tagSel'] is None:
 
 puFile = '/eos/cms/store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/Pileup/DY_madgraph_ele_2024.pu.puTree.root'
 puFile = '/eos/cms/store/group/phys_higgs/nonresonant_HH/PrivateProd/Yuxiang/TriggerSF/Pileup/DY_madgraph_EE_ele_pho_final_2425.pu.puTree.root'
-weightName = 'weights_2024_CDEFGHI.totWeight'
+weightName = 'weights_2025_CDEFG.totWeight'
 if not samplesDef['mcNom' ] is None: samplesDef['mcNom' ].set_weight(weightName)
 if not samplesDef['mcAlt' ] is None: samplesDef['mcAlt' ].set_weight(weightName)
 if not samplesDef['tagSel'] is None: samplesDef['tagSel'].set_weight(weightName)
@@ -183,9 +183,9 @@ branch_mapping =  {
 
 # r9Eta reweighting json file
 if DO_SEEDED:
-    r9Eta_reweighting = '/eos/user/y/yucao/HiggsDNA_latest/project/rwt_results_lead.json'
+    r9Eta_reweighting = '/eos/user/y/yucao/HiggsDNA_latest/project/rwt_results_2025_lead.json'
 else:
-    r9Eta_reweighting = '/eos/user/y/yucao/HiggsDNA_latest/project/rwt_results_sublead.json'
+    r9Eta_reweighting = '/eos/user/y/yucao/HiggsDNA_latest/project/rwt_results_2025_sublead.json'
     
 # can add addtionnal cuts for some bins (first check bin number using tnpEGM --checkBins)
 additionalCuts = { 
