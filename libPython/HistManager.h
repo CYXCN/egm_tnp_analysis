@@ -49,6 +49,22 @@ struct BranchMapping {
     std::string tag_sc_eta;
     std::string tag_r9;
     std::string tag_seedGain;
+
+    std::string rho;
+    std::string probe_pfPhoIso03;
+    std::string probe_sieie;
+    std::string probe_iso;
+    std::string probe_rel_iso;
+    std::string probe_electronVeto;
+    std::string probe_mvaID;
+    std::string probe_hoe;
+    std::string tag_pfPhoIso03;
+    std::string tag_sieie;
+    std::string tag_iso;
+    std::string tag_rel_iso;
+    std::string tag_electronVeto;
+    std::string tag_mvaID;
+    std::string tag_hoe;
     
     // Default constructor with default branch names
     BranchMapping() :
@@ -66,14 +82,71 @@ struct BranchMapping {
         tag_phi("tag_phi"),
         tag_sc_eta("tag_sc_eta"),
         tag_r9("tag_r9"),
-        tag_seedGain("tag_seedGain") {}
+        tag_seedGain("tag_seedGain"),
+
+        rho("rho"),
+        probe_pfPhoIso03("probe_pfPhoIso03"),
+        probe_sieie("probe_sieie"),
+        probe_iso("probe_iso"),
+        probe_rel_iso("probe_rel_iso"),
+        probe_electronVeto("probe_electronVeto"),
+        probe_mvaID("probe_mvaID"),
+        probe_hoe("probe_hoe"),
+        tag_pfPhoIso03("tag_pfPhoIso03"),
+        tag_sieie("tag_sieie"),
+        tag_iso("tag_iso"),
+        tag_rel_iso("tag_rel_iso"),
+        tag_electronVeto("tag_electronVeto"),
+        tag_mvaID("tag_mvaID"),
+        tag_hoe("tag_hoe")
+    {}
+};
+
+struct HGGSelection {
+
+    float EA1_EB1 = 0.102056;
+    float EA2_EB1 = -0.000398112;
+    float EA1_EB2 = 0.0820317;
+    float EA2_EB2 = -0.000286224;
+    float EA1_EE1 = 0.0564915;
+    float EA2_EE1 = -0.000248591;
+    float EA1_EE2 = 0.0428606;
+    float EA2_EE2 = -0.000171541;
+    float EA1_EE3 = 0.0395282;
+    float EA2_EE3 = -0.000121398;
+    float EA1_EE4 = 0.0369761;
+    float EA2_EE4 = -8.10369e-05;
+    float EA1_EE5 = 0.0369417;
+    float EA2_EE5 = -2.76885e-05;
+
+    float max_pho_iso_EB_low_r9 = 4.0;
+    float max_pho_iso_EE_low_r9 = 4.0;
+
+    float min_full5x5_r9_EB_high_r9 = 0.85;
+    float min_full5x5_r9_EE_high_r9 = 0.9;
+    float min_full5x5_r9_EB_low_r9 = 0.5;
+    float min_full5x5_r9_EE_low_r9 = 0.8;
+    
+    float max_trkSumPtHollowConeDR03_EB_low_r9 = 6.0;
+    float max_trkSumPtHollowConeDR03_EE_low_r9 = 6.0;
+    
+    float max_sieie_EB_low_r9 = 0.015;
+    float max_sieie_EE_low_r9 = 0.035;
+    
+    float min_pt_photon = 25.0;
+    float min_mvaid = -0.9;
+    float max_hovere = 0.08;
+    float min_full5x5_r9 = 0.8;
+    
+    float max_chad_iso = 20.0;
+    float max_chad_rel_iso = 0.3;
 };
 
 class HistManager {
 public:
     HistManager(TChain* chain, TFile* outfile, bool isMC, std::string flag_selection, std::string base_selection = "", std::string sample_name = "", int max_events = -1) 
         : fChain(chain), fOutfile(outfile), fIsMC(isMC), fFlagSelection(flag_selection), fBaseSelection(base_selection), 
-          fSampleName(sample_name), fMaxEvents(max_events), fCorrector(nullptr), fDoCorrection(false), fDoReweight(false), fBaseFormula(nullptr), fFlagFormula(nullptr) {
+          fSampleName(sample_name), fMaxEvents(max_events), fCorrector(nullptr), fDoCorrection(false), fDoReweight(false), fApplyHGGPreselection(false), fBaseFormula(nullptr), fFlagFormula(nullptr) {
         
         // Initialize variable values vector
         fCurrentVarValues.resize(3);
@@ -142,6 +215,13 @@ public:
                 fChain->SetBranchStatus(br.c_str(), 1);
             }
         }
+
+        // Enable reweight branches independently (probe_r9, probe_sc_eta are needed
+        // even when correction is disabled)
+        if (fDoReweight && !fDoCorrection) {
+            fChain->SetBranchStatus(fBranchMapping.probe_r9.c_str(), 1);
+            fChain->SetBranchStatus(fBranchMapping.probe_sc_eta.c_str(), 1);
+        }
         
         // Always enable pair_mass and flag
         fChain->SetBranchStatus(fBranchMapping.pair_mass.c_str(), 1);
@@ -153,6 +233,105 @@ public:
         fEtaBins = eta_bins;
         fRatioMap = ratio_map;
         fDoReweight = true;
+    }
+
+    void setHGGSelection( bool apply_preselection) {
+        fApplyHGGPreselection = apply_preselection;
+        // cout
+        std::cout << "HGG Preselection " << (fApplyHGGPreselection ? "enabled" : "disabled") << "." << std::endl;
+    }
+
+    HGGSelection HGG_Selection; // Public member to hold selection parameters
+    bool passPhotonSelection(
+        float eta, 
+        float pfPhoIso03, 
+        float sc_eta,
+        float r9, 
+        float sieie, 
+        float iso, 
+        float rel_iso, 
+        float electronVeto, 
+        float pt, 
+        float mvaID, 
+        float hoe, 
+        float rho, 
+        bool apply_electron_veto = false,   // corresponding to electron_veto
+        bool revert_electron_veto = false
+    ) const {
+        
+        float photon_abs_eta = std::abs(eta);
+        float photon_abs_sc_eta = std::abs(sc_eta);
+        bool isScEtaEB = photon_abs_sc_eta < 1.4442;
+        bool isScEtaEE = photon_abs_sc_eta > 1.566 && photon_abs_sc_eta < 2.5;
+
+        // 1. 计算 pass_phoIso_rho_corr_EB
+        bool pass_phoIso_rho_corr_EB = false;
+        if (photon_abs_eta > 0.0 && photon_abs_eta < 1.0) {
+            pass_phoIso_rho_corr_EB = (pfPhoIso03 - (rho * HGG_Selection.EA1_EB1) - (rho * rho * HGG_Selection.EA2_EB1)) < HGG_Selection.max_pho_iso_EB_low_r9;
+        } else if (photon_abs_eta > 1.0 && photon_abs_eta < 1.4442) {
+            pass_phoIso_rho_corr_EB = (pfPhoIso03 - (rho * HGG_Selection.EA1_EB2) - (rho * rho * HGG_Selection.EA2_EB2)) < HGG_Selection.max_pho_iso_EB_low_r9;
+        }
+
+        // 2. 计算 pass_phoIso_rho_corr_EE
+        bool pass_phoIso_rho_corr_EE = false;
+        if (photon_abs_eta > 1.566 && photon_abs_eta < 2.0) {
+            pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE1) - (rho * rho * HGG_Selection.EA2_EE1)) < HGG_Selection.max_pho_iso_EE_low_r9;
+        } else if (photon_abs_eta > 2.0 && photon_abs_eta < 2.2) {
+            pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE2) - (rho * rho * HGG_Selection.EA2_EE2)) < HGG_Selection.max_pho_iso_EE_low_r9;
+        } else if (photon_abs_eta > 2.2 && photon_abs_eta < 2.3) {
+            pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE3) - (rho * rho * HGG_Selection.EA2_EE3)) < HGG_Selection.max_pho_iso_EE_low_r9;
+        } else if (photon_abs_eta > 2.3 && photon_abs_eta < 2.4) {
+            pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE4) - (rho * rho * HGG_Selection.EA2_EE4)) < HGG_Selection.max_pho_iso_EE_low_r9;
+        } else if (photon_abs_eta > 2.4 && photon_abs_eta < 2.5) {
+            pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE5) - (rho * rho * HGG_Selection.EA2_EE5)) < HGG_Selection.max_pho_iso_EE_low_r9;
+        }
+
+        // 3. High R9 判定
+        bool isEB_high_r9 = isScEtaEB && (r9 > HGG_Selection.min_full5x5_r9_EB_high_r9);
+        bool isEE_high_r9 = isScEtaEE && (r9 > HGG_Selection.min_full5x5_r9_EE_high_r9);
+
+        // 4. Low R9 判定
+        bool isEB_low_r9 = isScEtaEB 
+                        && (r9 > HGG_Selection.min_full5x5_r9_EB_low_r9) 
+                        && (r9 < HGG_Selection.min_full5x5_r9_EB_high_r9) 
+                        && (iso < HGG_Selection.max_trkSumPtHollowConeDR03_EB_low_r9) 
+                        && (sieie < HGG_Selection.max_sieie_EB_low_r9) 
+                        && pass_phoIso_rho_corr_EB;
+
+        bool isEE_low_r9 = isScEtaEE 
+                        && (r9 > HGG_Selection.min_full5x5_r9_EE_low_r9) 
+                        && (r9 < HGG_Selection.min_full5x5_r9_EE_high_r9) 
+                        && (iso < HGG_Selection.max_trkSumPtHollowConeDR03_EE_low_r9) 
+                        && (sieie < HGG_Selection.max_sieie_EE_low_r9) 
+                        && pass_phoIso_rho_corr_EE;
+
+        // 5. electron Veto (Electron Veto)
+        bool e_veto_cut = true;
+        if (apply_electron_veto) {
+            e_veto_cut = (electronVeto > 0.5);
+        } else if (revert_electron_veto) {
+            e_veto_cut = (electronVeto < 0.5);
+        }
+
+        if (!e_veto_cut) return false;
+        if (pt <= HGG_Selection.min_pt_photon) return false;
+        if (!(isScEtaEB || isScEtaEE)) return false;
+        if (mvaID <= HGG_Selection.min_mvaid) return false;
+        if (hoe >= HGG_Selection.max_hovere) return false;
+
+        bool pass_r9_or_iso = (r9 > HGG_Selection.min_full5x5_r9) 
+                           || ((rel_iso) < HGG_Selection.max_chad_iso) // note, rel_iso‘s definition is different from NANOAOD, it is PFIsoChgQuadratic but not PFIsoChg/pt.
+                           || (rel_iso / pt < HGG_Selection.max_chad_rel_iso);
+        if (!pass_r9_or_iso) return false;
+
+        bool pass_category = isEB_high_r9 || isEB_low_r9 || isEE_high_r9 || isEE_low_r9;
+        if (!pass_category) return false;
+
+        // if all pass
+        if (r9 < 0.4){
+            std::cout << "Photon passed Selection cut with: R9 = " << r9 << ", Eta = " << eta << ", SC Eta = " << sc_eta << ", pt = " << pt << std::endl;
+        }
+        return true; 
     }
 
     // Main event loop
@@ -175,6 +354,7 @@ public:
         TLorentzVector vProbe, vTag, vSum;
 
         Long64_t pass_base_count = 0;
+        Long64_t enter_analysis_count = 0;
 
         bool check_correction = false;
         int max_check = 100;
@@ -237,6 +417,51 @@ public:
                 }
             }
 
+            // do HGG preselection
+            if (fApplyHGGPreselection) {
+                bool probe_pass_preselection = passPhotonSelection(
+                    probe_eta, 
+                    probe_pfPhoIso03, 
+                    probe_sc_eta,
+                    probe_r9, 
+                    probe_sieie, 
+                    probe_iso, 
+                    probe_rel_iso, 
+                    probe_electronVeto, 
+                    current_probe_pt, 
+                    probe_mvaID, 
+                    probe_hoe, 
+                    rho,
+                    false, // apply electron veto for preselection
+                    true  // revert electron veto for probe (probe should fail electron veto) meaning probe_electronVeto should be a electron
+                );
+                if (nevts > 100 and !probe_pass_preselection)
+                    continue;
+                bool tag_pass_preselection = passPhotonSelection(
+                    tag_eta, 
+                    tag_pfPhoIso03, 
+                    tag_sc_eta,
+                    tag_r9, 
+                    tag_sieie, 
+                    tag_iso, 
+                    tag_rel_iso, 
+                    tag_electronVeto, 
+                    current_tag_pt, 
+                    tag_mvaID, 
+                    tag_hoe, 
+                    rho,
+                    false // apply electron veto for preselection
+                );
+                if (nevts < 100) 
+                    std::cout << "Event " << index << ": HGG preselection. Probe pass: " << probe_pass_preselection << ", Tag pass: " << tag_pass_preselection << std::endl;
+                if (!probe_pass_preselection || !tag_pass_preselection){
+                    if (nevts < 100) 
+                    std::cout << "Event " << index << ": Failed HGG preselection, skipping event." << std::endl;
+                    continue;
+                }
+            }
+
+
             double reweight_factor = 1.0;
             if (fDoReweight) {
                 // Find R9 index (x-axis)
@@ -281,7 +506,7 @@ public:
                 for (const auto& cut : bin.range_cuts) {
                     if (cut.var_idx >= 0 && cut.var_idx < 3) {
                         float val = fCurrentVarValues[cut.var_idx];
-                        if (!(val > cut.min_val && val < cut.max_val)) {
+                        if (!(val >= cut.min_val && val < cut.max_val)) {
                             pass_manual = false;
                             break;
                         }
@@ -297,11 +522,13 @@ public:
                     } else {
                         bin.hFail->Fill(to_fill_mass, weight);
                     }
+                    enter_analysis_count++;
                     break; 
                 }
             }
         }
         std::cout << "[" << fSampleName << "] Total events passing base selection: " << pass_base_count << std::endl;
+        std::cout << "[" << fSampleName << "] Total events entering analysis: " << enter_analysis_count << std::endl;
     }
 
     // Finalize: remove negative bins and write
@@ -327,6 +554,7 @@ private:
     Run3Corrector* fCorrector;
     bool fDoCorrection;
     bool fDoReweight;
+    bool fApplyHGGPreselection;
     std::vector<double> fEtaBins;
     std::vector<double> fR9Bins;
     std::vector<std::vector<double>> fRatioMap;
@@ -349,6 +577,12 @@ private:
     unsigned int run;
     float probe_pt, probe_eta, probe_phi, probe_sc_eta, probe_r9, probe_seedGain, probe_et;
     float tag_pt, tag_eta, tag_phi, tag_sc_eta, tag_r9, tag_seedGain;
+
+    float rho;
+    float probe_pfPhoIso03, probe_sieie, probe_iso, probe_rel_iso, probe_mvaID, probe_hoe;
+    float probe_electronVeto;
+    float tag_pfPhoIso03, tag_sieie, tag_iso, tag_rel_iso, tag_mvaID, tag_hoe;
+    float tag_electronVeto;
 
     // Formulas
     TTreeFormula* fBaseFormula;
@@ -381,13 +615,40 @@ private:
         } else {
             // If not doing correction, we still need these for manual cuts if they are used
             probe_pt = 0; probe_et = 0; tag_pt = 0;
+            probe_r9 = 0; probe_sc_eta = 0;
             if(fChain->GetBranchStatus(fBranchMapping.probe_pt.c_str())) 
                 fChain->SetBranchAddress(fBranchMapping.probe_pt.c_str(), &probe_pt);
             if(fChain->GetBranchStatus(fBranchMapping.probe_et.c_str())) 
                 fChain->SetBranchAddress(fBranchMapping.probe_et.c_str(), &probe_et);
             if(fChain->GetBranchStatus(fBranchMapping.tag_pt.c_str())) 
                 fChain->SetBranchAddress(fBranchMapping.tag_pt.c_str(), &tag_pt);
+
+            // Set up reweight branches when reweighting is enabled without correction
+            if (fDoReweight) {
+                if(fChain->GetBranchStatus(fBranchMapping.probe_r9.c_str()))
+                    fChain->SetBranchAddress(fBranchMapping.probe_r9.c_str(), &probe_r9);
+                if(fChain->GetBranchStatus(fBranchMapping.probe_sc_eta.c_str()))
+                    fChain->SetBranchAddress(fBranchMapping.probe_sc_eta.c_str(), &probe_sc_eta);
+            }
         }
+        if (fApplyHGGPreselection) {
+            fChain->SetBranchAddress(fBranchMapping.rho.c_str(), &rho);
+            fChain->SetBranchAddress(fBranchMapping.probe_pfPhoIso03.c_str(), &probe_pfPhoIso03);
+            fChain->SetBranchAddress(fBranchMapping.probe_sieie.c_str(), &probe_sieie);
+            fChain->SetBranchAddress(fBranchMapping.probe_iso.c_str(), &probe_iso);
+            fChain->SetBranchAddress(fBranchMapping.probe_rel_iso.c_str(), &probe_rel_iso);
+            fChain->SetBranchAddress(fBranchMapping.probe_electronVeto.c_str(), &probe_electronVeto);
+            fChain->SetBranchAddress(fBranchMapping.probe_mvaID.c_str(), &probe_mvaID);
+            fChain->SetBranchAddress(fBranchMapping.probe_hoe.c_str(), &probe_hoe);
+            fChain->SetBranchAddress(fBranchMapping.tag_pfPhoIso03.c_str(), &tag_pfPhoIso03);
+            fChain->SetBranchAddress(fBranchMapping.tag_sieie.c_str(), &tag_sieie);
+            fChain->SetBranchAddress(fBranchMapping.tag_iso.c_str(), &tag_iso);
+            fChain->SetBranchAddress(fBranchMapping.tag_rel_iso.c_str(), &tag_rel_iso);
+            fChain->SetBranchAddress(fBranchMapping.tag_electronVeto.c_str(), &tag_electronVeto);
+            fChain->SetBranchAddress(fBranchMapping.tag_mvaID.c_str(), &tag_mvaID);
+            fChain->SetBranchAddress(fBranchMapping.tag_hoe.c_str(), &tag_hoe);
+        }
+
     }
 
     void setupFormulas() {

@@ -149,6 +149,7 @@ if args.createHists:
     r9Eta_reweighting = tnpConf.r9Eta_reweighting if hasattr(tnpConf, 'r9Eta_reweighting') else None
     if r9Eta_reweighting:
         print(f'apply R9-Eta reweighting using {r9Eta_reweighting} file')
+    apply_preselection = getattr(tnpConf, 'applyHGGPreselection', False)
 
     tnpBins_to_pass = copy.deepcopy(tnpBins)
     tnpBins_to_pass = tnpBins_converter(tnpBins_to_pass)
@@ -165,7 +166,7 @@ if args.createHists:
             if hasattr(sample, 'tree') and isinstance(getattr(sample, 'tree'), str):
                 setattr(sample, 'tree', getattr(sample, 'tree').encode('utf-8'))
             # 2. `tnpBins` must be converted
-            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_json_path, branch_mapping, r9Eta_reweighting)#, max_event = 10000000)
+            tnpHist.makePassFailHistograms( sample, tnpConf.flags[args.flag], tnpBins_to_pass, var, do_correction, correction_json_path, branch_mapping, r9Eta_reweighting, apply_preselection)#, max_event = 10000000)
     
     num_samples = len(list(tnpConf.samplesDef.keys()))
     num_processes = min(num_samples, mp.cpu_count())

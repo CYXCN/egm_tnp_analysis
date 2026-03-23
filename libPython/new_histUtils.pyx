@@ -29,6 +29,23 @@ cdef extern from "HistManager.h":
         string tag_r9
         string tag_seedGain
 
+        # for HGG
+        string rho
+        string probe_pfPhoIso03
+        string probe_sieie
+        string probe_iso
+        string probe_rel_iso
+        string probe_electronVeto
+        string probe_mvaID
+        string probe_hoe
+        string tag_pfPhoIso03
+        string tag_sieie
+        string tag_iso
+        string tag_rel_iso
+        string tag_electronVeto
+        string tag_mvaID
+        string tag_hoe
+
     cdef cppclass HistManager:
         HistManager(TChain* chain, TFile* outfile, bool isMC, string flag_selection, string base_selection, string sample_name, int max_event) except +
         void setBranchMapping(const BranchMapping& mapping)
@@ -36,6 +53,7 @@ cdef extern from "HistManager.h":
         void setReweightMap(vector[double] r9_bins, vector[double] eta_bins, vector[vector[double]] ratio_map)
         void configureCorrections(string json_path)
         void setBranches(vector[string] branches)
+        void setHGGSelection(bool apply_preselection)
         void process()
         void finalize()
 
@@ -100,7 +118,7 @@ def get_default_branch_mapping(tnp_type="electron"):
 # To Fill Tag and Probe histograms
 ##################################
 
-def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, correction_json_path=None, branch_mapping=None, reweight_json=None, max_event = -1 ):
+def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, correction_json_path=None, branch_mapping=None, reweight_json=None, apply_preselection=False, max_event = -1 ):
     import json
 
     # Declare all C variables at the beginning
@@ -168,24 +186,57 @@ def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, corr
         # Try to get from sample, otherwise use default
         tnp_type = getattr(sample, 'tnp_type', 'electron')
         branch_mapping = get_default_branch_mapping(tnp_type)
+
     
-    cpp_mapping.pair_mass = branch_mapping.get('pair_mass', 'pair_mass').encode('utf-8')
-    cpp_mapping.run = branch_mapping.get('run', 'run').encode('utf-8')
-    cpp_mapping.probe_pt = branch_mapping.get('probe_pt', 'prob_pt').encode('utf-8')
-    cpp_mapping.probe_eta = branch_mapping.get('probe_eta', 'prob_eta').encode('utf-8')
-    cpp_mapping.probe_phi = branch_mapping.get('probe_phi', 'prob_phi').encode('utf-8')
-    cpp_mapping.probe_sc_eta = branch_mapping.get('probe_sc_eta', 'prob_sc_eta').encode('utf-8')
-    cpp_mapping.probe_r9 = branch_mapping.get('probe_r9', 'prob_r9').encode('utf-8')
-    cpp_mapping.probe_seedGain = branch_mapping.get('probe_seedGain', 'prob_seedGain').encode('utf-8')
-    cpp_mapping.probe_et = branch_mapping.get('probe_et', 'prob_et').encode('utf-8')
-    cpp_mapping.tag_pt = branch_mapping.get('tag_pt', 'tag_pt').encode('utf-8')
-    cpp_mapping.tag_eta = branch_mapping.get('tag_eta', 'tag_eta').encode('utf-8')
-    cpp_mapping.tag_phi = branch_mapping.get('tag_phi', 'tag_phi').encode('utf-8')
-    cpp_mapping.tag_sc_eta = branch_mapping.get('tag_sc_eta', 'tag_sc_eta').encode('utf-8')
-    cpp_mapping.tag_r9 = branch_mapping.get('tag_r9', 'tag_r9').encode('utf-8')
-    cpp_mapping.tag_seedGain = branch_mapping.get('tag_seedGain', 'tag_seedGain').encode('utf-8')
+    class simple_setter:
+        def __init__(self, name, mapping_dict):
+            self.mapping_dict = mapping_dict
+            self.name = name
+
+        def __setattr__(self, key, value):
+            print(f"Setting attribute {key} to {value}")
+            super().__setattr__(key, value)
+        
+        def setter(self, key):
+            return self.mapping_dict.get(key, key).encode('utf-8')
+
+    setter = simple_setter("cpp_mapping", branch_mapping)
+    cpp_mapping.pair_mass = setter.setter('pair_mass')
+    cpp_mapping.run = setter.setter('run')
+    cpp_mapping.probe_pt = setter.setter('probe_pt')
+    cpp_mapping.probe_eta = setter.setter('probe_eta')
+    cpp_mapping.probe_phi = setter.setter('probe_phi')
+    cpp_mapping.probe_sc_eta = setter.setter('probe_sc_eta')
+    cpp_mapping.probe_r9 = setter.setter('probe_r9')
+    cpp_mapping.probe_seedGain = setter.setter('probe_seedGain')
+    cpp_mapping.probe_et = setter.setter('probe_et')
+    cpp_mapping.tag_pt = setter.setter('tag_pt')
+    cpp_mapping.tag_eta = setter.setter('tag_eta')
+    cpp_mapping.tag_phi = setter.setter('tag_phi')
+    cpp_mapping.tag_sc_eta = setter.setter('tag_sc_eta')
+    cpp_mapping.tag_r9 = setter.setter('tag_r9')
+    cpp_mapping.tag_seedGain = setter.setter('tag_seedGain')
+
+    # for HGG
+    cpp_mapping.rho = setter.setter('rho')
+    cpp_mapping.probe_pfPhoIso03 = setter.setter('probe_pfPhoIso03')
+    cpp_mapping.probe_sieie = setter.setter('probe_sieie')
+    cpp_mapping.probe_iso = setter.setter('probe_iso')
+    cpp_mapping.probe_rel_iso = setter.setter('probe_rel_iso')
+    cpp_mapping.probe_electronVeto = setter.setter('probe_electronVeto')
+    cpp_mapping.probe_mvaID = setter.setter('probe_mvaID')
+    cpp_mapping.probe_hoe = setter.setter('probe_hoe')
+    cpp_mapping.tag_pfPhoIso03 = setter.setter('tag_pfPhoIso03')
+    cpp_mapping.tag_sieie = setter.setter('tag_sieie')
+    cpp_mapping.tag_iso = setter.setter('tag_iso')
+    cpp_mapping.tag_rel_iso = setter.setter('tag_rel_iso')
+    cpp_mapping.tag_electronVeto = setter.setter('tag_electronVeto')
+    cpp_mapping.tag_mvaID = setter.setter('tag_mvaID')
+    cpp_mapping.tag_hoe = setter.setter('tag_hoe')
     
     manager.setBranchMapping(cpp_mapping)
+    # set HGG apply_preselection
+    manager.setHGGSelection(apply_preselection)
 
     # Configure Corrections
     if do_correction:
@@ -276,6 +327,14 @@ def makePassFailHistograms( sample, flag, bindef, var, do_correction=False, corr
     
     branches_set = set([x for x in branches_str.split(" ") if x != '' and not is_number(x)])
     branches_set.update(cor_cut_var) # Add variables used in manual cuts
+
+    # Ensure reweight branches are activated when reweighting is enabled
+    if reweight_json and branch_mapping:
+        rw_branches = [
+            branch_mapping.get('probe_r9', 'prob_r9'),
+            branch_mapping.get('probe_sc_eta', 'prob_sc_eta'),
+        ]
+        branches_set.update(rw_branches)
 
     print(f'the following branches will be activated: {branches_set}')
     for br in branches_set:
