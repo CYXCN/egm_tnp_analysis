@@ -264,7 +264,7 @@ public:
         bool isScEtaEB = photon_abs_sc_eta < 1.4442;
         bool isScEtaEE = photon_abs_sc_eta > 1.566 && photon_abs_sc_eta < 2.5;
 
-        // 1. 计算 pass_phoIso_rho_corr_EB
+        // 1. cal pass_phoIso_rho_corr_EB
         bool pass_phoIso_rho_corr_EB = false;
         if (photon_abs_eta > 0.0 && photon_abs_eta < 1.0) {
             pass_phoIso_rho_corr_EB = (pfPhoIso03 - (rho * HGG_Selection.EA1_EB1) - (rho * rho * HGG_Selection.EA2_EB1)) < HGG_Selection.max_pho_iso_EB_low_r9;
@@ -272,7 +272,7 @@ public:
             pass_phoIso_rho_corr_EB = (pfPhoIso03 - (rho * HGG_Selection.EA1_EB2) - (rho * rho * HGG_Selection.EA2_EB2)) < HGG_Selection.max_pho_iso_EB_low_r9;
         }
 
-        // 2. 计算 pass_phoIso_rho_corr_EE
+        // 2. cla pass_phoIso_rho_corr_EE
         bool pass_phoIso_rho_corr_EE = false;
         if (photon_abs_eta > 1.566 && photon_abs_eta < 2.0) {
             pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE1) - (rho * rho * HGG_Selection.EA2_EE1)) < HGG_Selection.max_pho_iso_EE_low_r9;
@@ -286,11 +286,11 @@ public:
             pass_phoIso_rho_corr_EE = (pfPhoIso03 - (rho * HGG_Selection.EA1_EE5) - (rho * rho * HGG_Selection.EA2_EE5)) < HGG_Selection.max_pho_iso_EE_low_r9;
         }
 
-        // 3. High R9 判定
+        // 3. High R9
         bool isEB_high_r9 = isScEtaEB && (r9 > HGG_Selection.min_full5x5_r9_EB_high_r9);
         bool isEE_high_r9 = isScEtaEE && (r9 > HGG_Selection.min_full5x5_r9_EE_high_r9);
 
-        // 4. Low R9 判定
+        // 4. Low R9
         bool isEB_low_r9 = isScEtaEB 
                         && (r9 > HGG_Selection.min_full5x5_r9_EB_low_r9) 
                         && (r9 < HGG_Selection.min_full5x5_r9_EB_high_r9) 
